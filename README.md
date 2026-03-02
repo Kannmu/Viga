@@ -16,7 +16,7 @@ Viga is a Tauri + React vector editor scaffold that follows the architecture in 
 
 ```bash
 npm install
-npm run dev
+npm run tauri dev
 ```
 
 Desktop app runs in `apps/desktop`.

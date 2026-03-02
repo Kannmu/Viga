@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <!-- 矢量路径渐变：青色至深蓝色，代表专业工具与理性逻辑 -->
+    <linearGradient id="vector-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#4FACFE"/>
+    </linearGradient>
+    <!-- AI星芒渐变：洋红至亮橙色，代表人工智能与创造力爆发 -->
+    <linearGradient id="ai-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF0844"/>
+      <stop offset="100%" stop-color="#FFB199"/>
+    </linearGradient>
+    <!-- 软件背景网格图案：隐喻无限画布 (Infinite Canvas) -->
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M 64 0 L 0 0 0 64" fill="none" stroke="#2A2A35" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <!-- 1. 背景层：圆角矩形及画布网格 -->
+  <rect width="1024" height="1024" rx="224" fill="#0D0D14"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#grid)"/>
+  <!-- 2. AI 智能核心 (AI Sparkle) -->
+  <!-- 位于 V 字开口中心，使用二次贝塞尔曲线 (Q) 构建完美星芒 -->
+  <path d="M 512 160 Q 512 340 332 340 Q 512 340 512 520 Q 512 340 692 340 Q 512 340 512 160 Z" fill="url(#ai-grad)"/>
+  <!-- 3. 核心矢量路径 ("V" 字母主体) -->
+  <path d="M 256 340 L 512 780 L 768 340" fill="none" stroke="url(#vector-grad)" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 4. 贝塞尔控制手柄 (Bezier Handles) - 强调100%可编辑性 -->
+  <line x1="280" y1="780" x2="744" y2="780" stroke="#4FACFE" stroke-width="8" stroke-dasharray="16 16"/>
+  <circle cx="280" cy="780" r="16" fill="#4FACFE"/>
+  <circle cx="744" cy="780" r="16" fill="#4FACFE"/>
+  <!-- 5. 矢量锚点 (Anchor Nodes) -->
+  <!-- 左上节点 -->
+  <circle cx="256" cy="340" r="36" fill="#0D0D14" stroke="#00F2FE" stroke-width="16"/>
+  <!-- 右上节点 -->
+  <circle cx="768" cy="340" r="36" fill="#0D0D14" stroke="#4FACFE" stroke-width="16"/>
+  <!-- 底部核心节点 -->
+  <rect x="476" y="744" width="72" height="72" rx="12" fill="#0D0D14" stroke="#4FACFE" stroke-width="16"/>
+</svg>
