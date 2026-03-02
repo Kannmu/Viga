@@ -1,0 +1,30 @@
+{
+  "name": "@viga/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@viga/ai-integration": "0.1.0",
+    "@viga/canvas-engine": "0.1.0",
+    "@viga/editor-core": "0.1.0",
+    "@viga/file-io": "0.1.0",
+    "@viga/ui-components": "0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.21.0",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0"
+  }
+}

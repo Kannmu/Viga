@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.turbo/
+.vite/
+coverage/
+*.log
+apps/desktop/dist/
+src-tauri/target/
+src-tauri/gen/
+*.viga
+*.zip

@@ -1,0 +1,109 @@
+import { nanoid } from 'nanoid';
+import type { Color, DocumentData, NodeId, RectangleNode, SceneNode } from './types';
+
+const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+
+export function createEmptyDocument(name = 'Untitled'): DocumentData {
+  return {
+    id: nanoid(),
+    name,
+    version: 1,
+    nodeOrder: [],
+    nodes: {},
+  };
+}
+
+export function createRectangleNode(x: number, y: number, width: number, height: number): RectangleNode {
+  return {
+    id: nanoid(),
+    type: 'rectangle',
+    name: 'Rectangle',
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fills: [{ type: 'solid', color: white }],
+    cornerRadii: [0, 0, 0, 0],
+  };
+}
+
+export class DocumentStore {
+  private document: DocumentData;
+
+  constructor(document: DocumentData) {
+    this.document = structuredClone(document);
+  }
+
+  snapshot(): DocumentData {
+    return structuredClone(this.document);
+  }
+
+  load(document: DocumentData): void {
+    this.document = structuredClone(document);
+  }
+
+  createNode(node: SceneNode): void {
+    this.document.nodes[node.id] = node;
+    this.document.nodeOrder.push(node.id);
+  }
+
+  deleteNodes(ids: NodeId[]): SceneNode[] {
+    const removed: SceneNode[] = [];
+    for (const id of ids) {
+      const node = this.document.nodes[id];
+      if (node) {
+        removed.push(node);
+        delete this.document.nodes[id];
+      }
+    }
+    this.document.nodeOrder = this.document.nodeOrder.filter((id) => !ids.includes(id));
+    return removed;
+  }
+
+  restoreNodes(nodes: SceneNode[]): void {
+    for (const node of nodes) {
+      this.document.nodes[node.id] = node;
+      if (!this.document.nodeOrder.includes(node.id)) {
+        this.document.nodeOrder.push(node.id);
+      }
+    }
+  }
+
+  updateNode(id: NodeId, patch: Partial<SceneNode>): SceneNode | null {
+    const node = this.document.nodes[id];
+    if (!node) {
+      return null;
+    }
+    const before = structuredClone(node);
+    this.document.nodes[id] = { ...node, ...patch } as SceneNode;
+    return before;
+  }
+
+  getNode(id: NodeId): SceneNode | null {
+    return this.document.nodes[id] ?? null;
+  }
+
+  hitTest(x: number, y: number): NodeId | null {
+    for (let i = this.document.nodeOrder.length - 1; i >= 0; i -= 1) {
+      const id = this.document.nodeOrder[i];
+      const node = this.document.nodes[id];
+      if (!node || !node.visible) {
+        continue;
+      }
+      if (x >= node.x && x <= node.x + node.width && y >= node.y && y <= node.y + node.height) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  getRenderableNodes(): SceneNode[] {
+    return this.document.nodeOrder
+      .map((id) => this.document.nodes[id])
+      .filter((node): node is SceneNode => Boolean(node));
+  }
+}

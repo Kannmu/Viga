@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Viga",
+  "version": "0.1.0",
+  "identifier": "com.viga.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --workspace @viga/desktop",
+    "beforeBuildCommand": "npm run build --workspace @viga/desktop",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../apps/desktop/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Viga",
+        "width": 1440,
+        "height": 900,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

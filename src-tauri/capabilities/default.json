@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read",
+    "fs:allow-write",
+    "clipboard:allow-read-text",
+    "clipboard:allow-write-text"
+  ]
+}
