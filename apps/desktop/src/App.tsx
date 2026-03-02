@@ -13,7 +13,13 @@ import { ToolBar, PropertiesPanel, LayerPanel } from '@viga/ui-components';
 import { AiPanel } from './components/AiPanel';
 import { BrowserKeyStore } from './ai/browserKeyStore';
 import { DEFAULT_MODEL } from './ai/defaultModel';
-import { createPreviewNode, getDraftGeometry, updateDraftPoint, type DrawDraft } from './canvas/draft';
+import {
+  createPreviewNode,
+  getDraftGeometry,
+  hasMeaningfulDraft,
+  updateDraftPoint,
+  type DrawDraft,
+} from './canvas/draft';
 
 function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -40,6 +46,7 @@ function App(): JSX.Element {
   const [modelRevision, setModelRevision] = useState(0);
 
   const activeTool = useEditorStore((s) => s.activeTool);
+  const dragState = useEditorStore((s) => s.dragState);
   const documentStore = useEditorStore((s) => s.documentStore);
   const documentVersion = useEditorStore((s) => s.documentVersion);
   const selectedIds = useEditorStore((s) => s.selectedIds);
@@ -64,7 +71,25 @@ function App(): JSX.Element {
     () => (selectedIds.length === 1 ? documentStore.getNode(selectedIds[0]) : null),
     [documentStore, documentVersion, selectedIds],
   );
-  const previewNodes = useMemo(() => (drawDraft ? [createPreviewNode(drawDraft)] : []), [drawDraft]);
+  const previewNodes = useMemo(
+    () => (drawDraft && hasMeaningfulDraft(drawDraft) ? [createPreviewNode(drawDraft)] : []),
+    [drawDraft],
+  );
+  const marqueeBox = useMemo(() => {
+    if (!dragState.active || dragState.mode !== 'marquee') {
+      return null;
+    }
+    const x1 = dragState.startX * viewport.zoom + viewport.panX;
+    const y1 = dragState.startY * viewport.zoom + viewport.panY;
+    const x2 = dragState.lastX * viewport.zoom + viewport.panX;
+    const y2 = dragState.lastY * viewport.zoom + viewport.panY;
+    return {
+      left: Math.min(x1, x2),
+      top: Math.min(y1, y2),
+      width: Math.abs(x2 - x1),
+      height: Math.abs(y2 - y1),
+    };
+  }, [dragState, viewport.panX, viewport.panY, viewport.zoom]);
 
   const keyStore = useMemo(() => new BrowserKeyStore(), []);
   const modelManager = useMemo(() => new ModelConfigManager(keyStore), [keyStore]);
@@ -131,6 +156,19 @@ function App(): JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inEditableField = Boolean(
+        target
+          && (target instanceof HTMLInputElement
+            || target instanceof HTMLTextAreaElement
+            || target instanceof HTMLSelectElement
+            || target.isContentEditable),
+      );
+
+      if (inEditableField) {
+        return;
+      }
+
       const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -296,20 +334,26 @@ function App(): JSX.Element {
       onMouseUp: (e: React.MouseEvent<HTMLCanvasElement>) => {
         panStateRef.current.active = false;
 
-        if (drawDraft) {
-          const point = toCanvasPoint(e);
-          const finalDraft = updateDraftPoint(drawDraft, point.x, point.y);
-          const geometry = getDraftGeometry(finalDraft);
-          setDrawDraft(null);
-
-          if (finalDraft.tool === ToolType.Line || finalDraft.tool === ToolType.Pen) {
-            createShape(ToolType.Line, geometry.x, geometry.y, geometry.width, geometry.height);
-            return;
-          }
-
-          createShape(finalDraft.tool, geometry.x, geometry.y, geometry.width, geometry.height);
+      if (drawDraft) {
+        const point = toCanvasPoint(e);
+        const finalDraft = updateDraftPoint(drawDraft, point.x, point.y);
+        const shouldCreate = hasMeaningfulDraft(finalDraft);
+        setDrawDraft(null);
+        if (!shouldCreate) {
           return;
         }
+
+        const geometry = getDraftGeometry(finalDraft);
+        if (finalDraft.tool === ToolType.Line || finalDraft.tool === ToolType.Pen) {
+          createShape(ToolType.Line, geometry.x, geometry.y, geometry.width, geometry.height);
+          setTool(ToolType.Select);
+          return;
+        }
+
+        createShape(finalDraft.tool, geometry.x, geometry.y, geometry.width, geometry.height);
+        setTool(ToolType.Select);
+        return;
+      }
 
         endPointerDrag();
       },
@@ -431,6 +475,17 @@ function App(): JSX.Element {
             style={{ cursor: activeTool === ToolType.Hand ? 'grab' : drawDraft ? 'crosshair' : 'default' }}
             {...mouseHandlers}
           />
+          {marqueeBox ? (
+            <div
+              className="marquee-box"
+              style={{
+                left: marqueeBox.left,
+                top: marqueeBox.top,
+                width: marqueeBox.width,
+                height: marqueeBox.height,
+              }}
+            />
+          ) : null}
           {rendererError ? <p className="canvas-error">{rendererError}</p> : null}
           <div className="viewport-chip">{Math.round(viewport.zoom * 100)}%</div>
           <div className="tool-dock">

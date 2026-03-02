@@ -31,6 +31,7 @@ function App() {
     const [testStatus, setTestStatus] = useState('');
     const [modelRevision, setModelRevision] = useState(0);
     const activeTool = useEditorStore((s) => s.activeTool);
+    const dragState = useEditorStore((s) => s.dragState);
     const documentStore = useEditorStore((s) => s.documentStore);
     const documentVersion = useEditorStore((s) => s.documentVersion);
     const selectedIds = useEditorStore((s) => s.selectedIds);
@@ -53,6 +54,21 @@ function App() {
     const nodes = useMemo(() => documentStore.getRenderableNodes(), [documentStore, documentVersion]);
     const selectedNode = useMemo(() => (selectedIds.length === 1 ? documentStore.getNode(selectedIds[0]) : null), [documentStore, documentVersion, selectedIds]);
     const previewNodes = useMemo(() => (drawDraft ? [createPreviewNode(drawDraft)] : []), [drawDraft]);
+    const marqueeBox = useMemo(() => {
+        if (!dragState.active || dragState.mode !== 'marquee') {
+            return null;
+        }
+        const x1 = dragState.startX * viewport.zoom + viewport.panX;
+        const y1 = dragState.startY * viewport.zoom + viewport.panY;
+        const x2 = dragState.lastX * viewport.zoom + viewport.panX;
+        const y2 = dragState.lastY * viewport.zoom + viewport.panY;
+        return {
+            left: Math.min(x1, x2),
+            top: Math.min(y1, y2),
+            width: Math.abs(x2 - x1),
+            height: Math.abs(y2 - y1),
+        };
+    }, [dragState, viewport.panX, viewport.panY, viewport.zoom]);
     const keyStore = useMemo(() => new BrowserKeyStore(), []);
     const modelManager = useMemo(() => new ModelConfigManager(keyStore), [keyStore]);
     const aiClient = useMemo(() => new OpenAICompatibleClient((profileId) => modelManager.getApiKeyForProfile(profileId)), [modelManager]);
@@ -368,7 +384,12 @@ function App() {
     return (_jsxs("div", { className: "app-shell", children: [_jsx("header", { className: "menu-bar", children: "Viga" }), _jsx("div", { className: "workspace", children: _jsxs("div", { className: "canvas-zone", style: {
                         ['--left-panel-width']: `${leftPanelWidth}px`,
                         ['--right-panel-width']: `${rightPanelWidth}px`,
-                    }, children: [_jsx("canvas", { ref: canvasRef, className: "canvas", style: { cursor: activeTool === ToolType.Hand ? 'grab' : drawDraft ? 'crosshair' : 'default' }, ...mouseHandlers }), rendererError ? _jsx("p", { className: "canvas-error", children: rendererError }) : null, _jsxs("div", { className: "viewport-chip", children: [Math.round(viewport.zoom * 100), "%"] }), _jsx("div", { className: "tool-dock", children: _jsx(ToolBar, { activeTool: activeTool, onToolChange: setTool, orientation: "horizontal" }) }), _jsxs("aside", { className: "floating-panel floating-left", style: { width: leftPanelWidth }, children: [_jsx(LayerPanel, { nodes: nodes, selectedIds: selectedIds, onSelectNode: (id, append) => {
+                    }, children: [_jsx("canvas", { ref: canvasRef, className: "canvas", style: { cursor: activeTool === ToolType.Hand ? 'grab' : drawDraft ? 'crosshair' : 'default' }, ...mouseHandlers }), marqueeBox ? (_jsx("div", { className: "marquee-box", style: {
+                                left: marqueeBox.left,
+                                top: marqueeBox.top,
+                                width: marqueeBox.width,
+                                height: marqueeBox.height,
+                            } })) : null, rendererError ? _jsx("p", { className: "canvas-error", children: rendererError }) : null, _jsxs("div", { className: "viewport-chip", children: [Math.round(viewport.zoom * 100), "%"] }), _jsx("div", { className: "tool-dock", children: _jsx(ToolBar, { activeTool: activeTool, onToolChange: setTool, orientation: "horizontal" }) }), _jsxs("aside", { className: "floating-panel floating-left", style: { width: leftPanelWidth }, children: [_jsx(LayerPanel, { nodes: nodes, selectedIds: selectedIds, onSelectNode: (id, append) => {
                                         if (append) {
                                             const next = selectedIds.includes(id)
                                                 ? selectedIds.filter((existing) => existing !== id)

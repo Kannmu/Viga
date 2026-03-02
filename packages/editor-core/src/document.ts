@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { Color, DocumentData, NodeId, RectangleNode, SceneNode, TextNode } from './types';
 
-const defaultShapeFill: Color = { r: 0.36, g: 0.6, b: 0.96, a: 1 };
+const defaultShapeFill: Color = { r: 0.6, g: 0.6, b: 0.6, a: 1 };
 
 export function createEmptyDocument(name = 'Untitled'): DocumentData {
   return {
@@ -61,7 +61,7 @@ export function createLineNode(x: number, y: number, width: number, height: numb
     opacity: 1,
     visible: true,
     locked: false,
-    fills: [{ type: 'solid', color: { r: 0.22, g: 0.51, b: 0.96, a: 1 } }],
+    fills: [{ type: 'solid', color: defaultShapeFill }],
   };
 }
 
@@ -165,9 +165,67 @@ export class DocumentStore {
     return null;
   }
 
+  queryNodesInRect(x1: number, y1: number, x2: number, y2: number): NodeId[] {
+    const minX = Math.min(x1, x2);
+    const minY = Math.min(y1, y2);
+    const maxX = Math.max(x1, x2);
+    const maxY = Math.max(y1, y2);
+
+    const hits: NodeId[] = [];
+    for (let i = this.document.nodeOrder.length - 1; i >= 0; i -= 1) {
+      const id = this.document.nodeOrder[i];
+      const node = this.document.nodes[id];
+      if (!node || !node.visible) {
+        continue;
+      }
+
+      const nodeMinX = Math.min(node.x, node.x + node.width);
+      const nodeMinY = Math.min(node.y, node.y + node.height);
+      const nodeMaxX = Math.max(node.x, node.x + node.width);
+      const nodeMaxY = Math.max(node.y, node.y + node.height);
+
+      const intersects = nodeMaxX >= minX && nodeMinX <= maxX && nodeMaxY >= minY && nodeMinY <= maxY;
+      if (intersects) {
+        hits.push(id);
+      }
+    }
+    return hits;
+  }
+
   getRenderableNodes(): SceneNode[] {
     return this.document.nodeOrder
       .map((id) => this.document.nodes[id])
       .filter((node): node is SceneNode => Boolean(node));
   }
+
+  getUniqueNodeName(baseName: string): string {
+    const cleanBase = baseName.trim() || 'Layer';
+    const pattern = new RegExp(`^${escapeRegex(cleanBase)}(?:\\s+(\\d+))?$`);
+    const used = new Set<number>();
+
+    for (const id of this.document.nodeOrder) {
+      const node = this.document.nodes[id];
+      if (!node) {
+        continue;
+      }
+      const match = node.name.match(pattern);
+      if (!match) {
+        continue;
+      }
+      const index = match[1] ? Number(match[1]) : 1;
+      if (Number.isFinite(index) && index > 0) {
+        used.add(index);
+      }
+    }
+
+    let next = 1;
+    while (used.has(next)) {
+      next += 1;
+    }
+    return `${cleanBase} ${next}`;
+  }
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

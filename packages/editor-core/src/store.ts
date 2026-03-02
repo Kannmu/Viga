@@ -32,6 +32,11 @@ interface EditorState {
     totalDx: number;
     totalDy: number;
     appendSelection: boolean;
+    mode: 'none' | 'move' | 'marquee';
+    startX: number;
+    startY: number;
+    marqueeIds: NodeId[];
+    baseSelectionIds: NodeId[];
   };
   loadDocument: (document: DocumentData) => void;
   setTool: (tool: ToolType) => void;
@@ -44,6 +49,7 @@ interface EditorState {
   beginPointerDrag: (x: number, y: number, append: boolean) => void;
   updatePointerDrag: (x: number, y: number) => void;
   endPointerDrag: () => void;
+  getMarqueeIds: () => NodeId[];
   updateSelectionStyles: (patch: EditableNodePatch) => void;
   nudgeSelection: (dx: number, dy: number) => void;
   applyCommands: (commands: Command[]) => void;
@@ -94,6 +100,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     totalDx: 0,
     totalDy: 0,
     appendSelection: false,
+    mode: 'none',
+    startX: 0,
+    startY: 0,
+    marqueeIds: [],
+    baseSelectionIds: [],
   },
 
   loadDocument: (document) => {
@@ -115,6 +126,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         : tool === ToolTypes.Line
           ? createLineNode(x, y, width, height)
           : createRectangleNode(x, y, width, height);
+    node.name = state.documentStore.getUniqueNodeName(node.name);
     state.commandManager.execute(state.documentStore, new CreateNodeCommand(node));
     set((curr) => ({ selectedIds: [node.id], documentVersion: curr.documentVersion + 1 }));
   },
@@ -122,6 +134,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   createText: (x, y, value = 'Text') => {
     const state = get();
     const node = createTextNode(x, y, value);
+    node.name = state.documentStore.getUniqueNodeName(node.name);
     state.commandManager.execute(state.documentStore, new CreateNodeCommand(node));
     set((curr) => ({ selectedIds: [node.id], documentVersion: curr.documentVersion + 1 }));
   },
@@ -159,15 +172,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     if (!hit) {
       set({
-        selectedIds: [],
+        selectedIds: append ? state.selectedIds : [],
         dragState: {
-          active: false,
+          active: true,
           lastX: x,
           lastY: y,
           moved: false,
           totalDx: 0,
           totalDy: 0,
           appendSelection: append,
+          mode: 'marquee',
+          startX: x,
+          startY: y,
+          marqueeIds: [],
+          baseSelectionIds: state.selectedIds,
         },
       });
       return;
@@ -192,13 +210,48 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         totalDx: 0,
         totalDy: 0,
         appendSelection: append,
+        mode: 'move',
+        startX: x,
+        startY: y,
+        marqueeIds: [],
+        baseSelectionIds: nextSelection,
       },
     });
   },
 
   updatePointerDrag: (x, y) => {
     const state = get();
-    if (!state.dragState.active || state.selectedIds.length === 0) {
+    if (!state.dragState.active) {
+      return;
+    }
+
+    if (state.dragState.mode === 'marquee') {
+      const nextIds = state.documentStore.queryNodesInRect(state.dragState.startX, state.dragState.startY, x, y);
+      const previewSet = new Set(nextIds);
+      const sameSize = previewSet.size === state.dragState.marqueeIds.length;
+      const unchanged = sameSize && state.dragState.marqueeIds.every((id) => previewSet.has(id));
+      if (unchanged) {
+        return;
+      }
+
+      const baseSet = new Set(state.dragState.baseSelectionIds);
+      const merged = state.dragState.appendSelection
+        ? [...baseSet, ...nextIds.filter((id) => !baseSet.has(id))]
+        : nextIds;
+
+      set((curr) => ({
+        selectedIds: merged,
+        dragState: {
+          ...curr.dragState,
+          lastX: x,
+          lastY: y,
+          marqueeIds: nextIds,
+        },
+      }));
+      return;
+    }
+
+    if (state.selectedIds.length === 0) {
       return;
     }
     const dx = x - state.dragState.lastX;
@@ -226,8 +279,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return;
     }
 
-    const { totalDx, totalDy, moved } = state.dragState;
-    if (moved && (totalDx !== 0 || totalDy !== 0) && state.selectedIds.length > 0) {
+    const { totalDx, totalDy, moved, mode } = state.dragState;
+    if (mode === 'move' && moved && (totalDx !== 0 || totalDy !== 0) && state.selectedIds.length > 0) {
       state.documentStore.moveNodes(state.selectedIds, -totalDx, -totalDy);
       state.commandManager.execute(state.documentStore, new MoveNodesCommand(state.selectedIds, totalDx, totalDy));
       commitVersion(set);
@@ -240,9 +293,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         moved: false,
         totalDx: 0,
         totalDy: 0,
+        mode: 'none',
+        marqueeIds: [],
+        baseSelectionIds: [],
       },
     }));
   },
+
+  getMarqueeIds: () => get().dragState.marqueeIds,
 
   updateSelectionStyles: (patch) => {
     const state = get();

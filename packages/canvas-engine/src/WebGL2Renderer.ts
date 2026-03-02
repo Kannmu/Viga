@@ -167,7 +167,7 @@ export class WebGL2Renderer {
         gl.uniform4f(this.uColor, c.r, c.g, c.b, c.a * node.opacity);
         gl.drawArrays(gl.TRIANGLE_FAN, 0, 38);
       } else {
-        const vertices = this.toScreenVertices(this.getRectTriangles(node));
+        const vertices = this.toScreenVertices(this.getNodeTriangles(node));
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
         gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
@@ -176,7 +176,7 @@ export class WebGL2Renderer {
           ? fill.color
           : { r: 0.9, g: 0.9, b: 0.9, a: 1 };
         gl.uniform4f(this.uColor, c.r, c.g, c.b, c.a * node.opacity);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 
         if (node.type === 'text') {
           const baselineY = y + Math.max(12, node.fontSize * 0.85);
@@ -242,6 +242,13 @@ export class WebGL2Renderer {
     return out;
   }
 
+  private getNodeTriangles(node: SceneNode): Float32Array {
+    if (node.type === 'rectangle' && node.cornerRadii.some((radius) => radius > 0)) {
+      return this.getRoundedRectTriangles(node);
+    }
+    return this.getRectTriangles(node);
+  }
+
   private getRectTriangles(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
     const corners = this.getRectCorners(node);
     return new Float32Array([
@@ -252,6 +259,64 @@ export class WebGL2Renderer {
       corners[2], corners[3],
       corners[4], corners[5],
     ]);
+  }
+
+  private getRoundedRectTriangles(
+    node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'> & { cornerRadii: [number, number, number, number] },
+  ): Float32Array {
+    const x = node.x;
+    const y = node.y;
+    const w = Math.abs(node.width);
+    const h = Math.abs(node.height);
+    const rotation = this.toRadians(node.rotation);
+    const centerX = node.x + node.width / 2;
+    const centerY = node.y + node.height / 2;
+
+    const maxRadius = Math.min(w, h) / 2;
+    const [tl, tr, br, bl] = node.cornerRadii.map((radius) => Math.min(Math.max(0, radius), maxRadius));
+
+    const perimeter: Array<[number, number]> = [];
+    const pushArc = (cx: number, cy: number, r: number, start: number, end: number): void => {
+      if (r <= 0) {
+        const point: [number, number] = [cx, cy];
+        if (!this.samePoint(perimeter[perimeter.length - 1], point)) {
+          perimeter.push(point);
+        }
+        return;
+      }
+      const steps = Math.max(4, Math.ceil(r / 3));
+      for (let i = 0; i <= steps; i += 1) {
+        const t = start + ((end - start) * i) / steps;
+        const point: [number, number] = [cx + Math.cos(t) * r, cy + Math.sin(t) * r];
+        if (!this.samePoint(perimeter[perimeter.length - 1], point)) {
+          perimeter.push(point);
+        }
+      }
+    };
+
+    pushArc(x + w - tr, y + tr, tr, -Math.PI / 2, 0);
+    pushArc(x + w - br, y + h - br, br, 0, Math.PI / 2);
+    pushArc(x + bl, y + h - bl, bl, Math.PI / 2, Math.PI);
+    pushArc(x + tl, y + tl, tl, Math.PI, Math.PI * 1.5);
+
+    if (perimeter.length < 3) {
+      return this.getRectTriangles(node);
+    }
+
+    const vertices: number[] = [];
+    for (let i = 0; i < perimeter.length; i += 1) {
+      const current = perimeter[i];
+      const next = perimeter[(i + 1) % perimeter.length];
+      const [p1x, p1y] = rotation === 0
+        ? current
+        : this.rotatePoint(current[0], current[1], centerX, centerY, rotation);
+      const [p2x, p2y] = rotation === 0
+        ? next
+        : this.rotatePoint(next[0], next[1], centerX, centerY, rotation);
+      vertices.push(centerX, centerY, p1x, p1y, p2x, p2y);
+    }
+
+    return new Float32Array(vertices);
   }
 
   private getRectCorners(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
@@ -316,6 +381,13 @@ export class WebGL2Renderer {
     const dx = x - cx;
     const dy = y - cy;
     return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+  }
+
+  private samePoint(a: [number, number] | undefined, b: [number, number]): boolean {
+    if (!a) {
+      return false;
+    }
+    return Math.abs(a[0] - b[0]) < 0.0001 && Math.abs(a[1] - b[1]) < 0.0001;
   }
 
   private toRadians(deg: number): number {

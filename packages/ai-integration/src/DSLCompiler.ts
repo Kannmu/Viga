@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { createRectangleNode } from '@viga/editor-core';
+import {
+  createEllipseNode,
+  createLineNode,
+  createRectangleNode,
+  createTextNode,
+} from '@viga/editor-core';
 import {
   CreateNodeCommand,
   DeleteNodesCommand,
@@ -11,7 +16,7 @@ import type { DSLElement, VigaDSL } from './types';
 
 const elementSchema = z.object({
   id: z.string(),
-  type: z.enum(['rectangle', 'ellipse', 'line', 'text']),
+  type: z.enum(['rectangle', 'ellipse', 'line', 'text', 'frame', 'polygon', 'star', 'path', 'group']),
   name: z.string().optional(),
   x: z.number(),
   y: z.number(),
@@ -87,12 +92,10 @@ function parseHexFill(input: unknown): { type: 'solid'; color: { r: number; g: n
 
 export class DSLCompiler {
   extractDSL(responseText: string): VigaDSL | null {
-    const match = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-    if (!match) {
-      return null;
-    }
+    const match = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const payload = match ? match[1] : responseText;
     try {
-      const parsed = JSON.parse(match[1]);
+      const parsed = JSON.parse(payload);
       return dslSchema.parse(parsed);
     } catch {
       return null;
@@ -101,19 +104,24 @@ export class DSLCompiler {
 
   compile(dsl: VigaDSL): Command[] {
     const commands: Command[] = [];
+    const createdIdMap = new Map<string, string>();
 
     for (const op of dsl.operations) {
       if (op.action === 'create') {
-        commands.push(this.compileCreate(op.element));
+        const { command, createdId } = this.compileCreate(op.element);
+        createdIdMap.set(op.element.id, createdId);
+        commands.push(command);
         continue;
       }
       if (op.action === 'delete') {
-        commands.push(new DeleteNodesCommand([op.targetId]));
+        const targetId = this.resolveNodeId(op.targetId, createdIdMap);
+        commands.push(new DeleteNodesCommand([targetId]));
         continue;
       }
       if (op.action === 'modify' || op.action === 'style') {
+        const targetId = this.resolveNodeId(op.targetId, createdIdMap);
         const patch: EditableNodePatch = {};
-        const source = op.action === 'modify' ? op.properties : op.properties;
+        const source = op.properties;
 
         if (typeof source.x === 'number') patch.x = source.x;
         if (typeof source.y === 'number') patch.y = source.y;
@@ -121,6 +129,10 @@ export class DSLCompiler {
         if (typeof source.height === 'number') patch.height = source.height;
         if (typeof source.name === 'string') patch.name = source.name;
         if (typeof source.opacity === 'number') patch.opacity = source.opacity;
+        if (typeof source.rotation === 'number') patch.rotation = source.rotation;
+        if (typeof source.text === 'string') patch.characters = source.text;
+        if (typeof source.characters === 'string') patch.characters = source.characters;
+        if (typeof source.fontSize === 'number') patch.fontSize = source.fontSize;
 
         const fill = parseHexFill(source.fill);
         if (fill) {
@@ -128,7 +140,7 @@ export class DSLCompiler {
         }
 
         if (Object.keys(patch).length > 0) {
-          commands.push(new UpdateNodesCommand([op.targetId], patch));
+          commands.push(new UpdateNodesCommand([targetId], patch));
         }
         continue;
       }
@@ -138,7 +150,13 @@ export class DSLCompiler {
     return commands;
   }
 
-  private compileCreate(element: DSLElement): Command {
+  private resolveNodeId(id: string, createdIdMap: Map<string, string>): string {
+    return createdIdMap.get(id) ?? id;
+  }
+
+  private compileCreate(element: DSLElement): { command: Command; createdId: string } {
+    const fill = parseHexFill(element.fill);
+
     if (element.type === 'rectangle') {
       const node = createRectangleNode(
         element.x,
@@ -147,7 +165,56 @@ export class DSLCompiler {
         element.height ?? 80,
       );
       node.name = element.name ?? node.name;
-      return new CreateNodeCommand(node);
+      if (fill) {
+        node.fills = fill;
+      }
+      return { command: new CreateNodeCommand(node), createdId: node.id };
+    }
+
+    if (element.type === 'ellipse') {
+      const node = createEllipseNode(
+        element.x,
+        element.y,
+        element.width ?? 120,
+        element.height ?? 80,
+      );
+      node.name = element.name ?? 'Ellipse';
+      if (fill) {
+        node.fills = fill;
+      }
+      return { command: new CreateNodeCommand(node), createdId: node.id };
+    }
+
+    if (element.type === 'line') {
+      const node = createLineNode(
+        element.x,
+        element.y,
+        element.width ?? 140,
+        element.height ?? 0,
+      );
+      node.name = element.name ?? 'Line';
+      if (fill) {
+        node.fills = fill;
+      }
+      return { command: new CreateNodeCommand(node), createdId: node.id };
+    }
+
+    if (element.type === 'text') {
+      const node = createTextNode(element.x, element.y, element.text ?? 'Text');
+      if (typeof element.width === 'number') {
+        node.width = element.width;
+      }
+      if (typeof element.height === 'number') {
+        node.height = element.height;
+      }
+      if (typeof element.fontSize === 'number') {
+        node.fontSize = element.fontSize;
+      }
+      node.name = element.name ?? 'Text';
+      if (fill) {
+        node.fills = fill;
+      }
+      return { command: new CreateNodeCommand(node), createdId: node.id };
     }
 
     const fallback = createRectangleNode(
@@ -157,6 +224,9 @@ export class DSLCompiler {
       element.height ?? 80,
     );
     fallback.name = element.name ?? element.type;
-    return new CreateNodeCommand(fallback);
+    if (fill) {
+      fallback.fills = fill;
+    }
+    return { command: new CreateNodeCommand(fallback), createdId: fallback.id };
   }
 }
