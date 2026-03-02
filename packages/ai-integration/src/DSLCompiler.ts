@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { createRectangleNode } from '@viga/editor-core';
-import { CreateNodeCommand, type Command } from '@viga/editor-core';
+import {
+  CreateNodeCommand,
+  DeleteNodesCommand,
+  UpdateNodesCommand,
+  type Command,
+} from '@viga/editor-core';
+import type { EditableNodePatch } from '@viga/editor-core';
 import type { DSLElement, VigaDSL } from './types';
 
 const elementSchema = z.object({
@@ -35,9 +41,49 @@ const dslSchema = z.object({
         action: z.literal('delete'),
         targetId: z.string(),
       }),
+      z.object({
+        action: z.literal('group'),
+        elementIds: z.array(z.string()),
+        name: z.string(),
+      }),
+      z.object({
+        action: z.literal('align'),
+        elementIds: z.array(z.string()),
+        alignment: z.enum([
+          'left',
+          'center',
+          'right',
+          'top',
+          'middle',
+          'bottom',
+          'distribute-h',
+          'distribute-v',
+        ]),
+      }),
+      z.object({
+        action: z.literal('style'),
+        targetId: z.string(),
+        properties: z.record(z.unknown()),
+      }),
     ]),
   ),
 });
+
+function parseHexFill(input: unknown): { type: 'solid'; color: { r: number; g: number; b: number; a: number } }[] | null {
+  if (typeof input !== 'string') {
+    return null;
+  }
+  const value = input.trim();
+  const m = value.match(/^#([0-9a-fA-F]{6})$/);
+  if (!m) {
+    return null;
+  }
+  const hex = m[1];
+  const r = Number.parseInt(hex.slice(0, 2), 16) / 255;
+  const g = Number.parseInt(hex.slice(2, 4), 16) / 255;
+  const b = Number.parseInt(hex.slice(4, 6), 16) / 255;
+  return [{ type: 'solid', color: { r, g, b, a: 1 } }];
+}
 
 export class DSLCompiler {
   extractDSL(responseText: string): VigaDSL | null {
@@ -57,10 +103,37 @@ export class DSLCompiler {
     const commands: Command[] = [];
 
     for (const op of dsl.operations) {
-      if (op.action !== 'create') {
+      if (op.action === 'create') {
+        commands.push(this.compileCreate(op.element));
         continue;
       }
-      commands.push(this.compileCreate(op.element));
+      if (op.action === 'delete') {
+        commands.push(new DeleteNodesCommand([op.targetId]));
+        continue;
+      }
+      if (op.action === 'modify' || op.action === 'style') {
+        const patch: EditableNodePatch = {};
+        const source = op.action === 'modify' ? op.properties : op.properties;
+
+        if (typeof source.x === 'number') patch.x = source.x;
+        if (typeof source.y === 'number') patch.y = source.y;
+        if (typeof source.width === 'number') patch.width = source.width;
+        if (typeof source.height === 'number') patch.height = source.height;
+        if (typeof source.name === 'string') patch.name = source.name;
+        if (typeof source.opacity === 'number') patch.opacity = source.opacity;
+
+        const fill = parseHexFill(source.fill);
+        if (fill) {
+          patch.fills = fill;
+        }
+
+        if (Object.keys(patch).length > 0) {
+          commands.push(new UpdateNodesCommand([op.targetId], patch));
+        }
+        continue;
+      }
+
+      // group/align are accepted by schema but not yet compiled in MVP scaffold
     }
     return commands;
   }

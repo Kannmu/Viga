@@ -6,18 +6,22 @@ export interface VigaArchive {
     version: string;
     createdAt: number;
     updatedAt: number;
+    documentName?: string;
+    nodeCount?: number;
   };
   document: DocumentData;
 }
 
 export class ProjectManager {
-  serialize(document: DocumentData): Uint8Array {
+  serialize(document: DocumentData, previous?: VigaArchive['manifest']): Uint8Array {
     const now = Date.now();
     const archive: VigaArchive = {
       manifest: {
         version: '1.0.0',
-        createdAt: now,
+        createdAt: previous?.createdAt ?? now,
         updatedAt: now,
+        documentName: document.name,
+        nodeCount: document.nodeOrder.length,
       },
       document,
     };

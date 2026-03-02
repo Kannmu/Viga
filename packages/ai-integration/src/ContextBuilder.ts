@@ -8,25 +8,42 @@ export interface ContextBuilderStore {
 export class ContextBuilder {
   constructor(private readonly store: ContextBuilderStore) {}
 
-  buildSelectionContext(selectedIds: string[]): string {
+  buildSelectionContext(selectedIds: string[], maxOverviewCount = 200): string {
     const selectedElements = selectedIds
       .map((id) => this.store.getNode(id))
       .filter((node): node is SceneNode => Boolean(node))
       .map((node) => this.simplifyNode(node));
 
+    const overviewCount = this.store.getRenderableNodes().length;
+
     return JSON.stringify(
       {
         selectedElements,
-        canvasOverviewCount: this.store.getRenderableNodes().length,
+        canvasOverviewCount: overviewCount,
+        hasSelection: selectedElements.length > 0,
+        contextPolicy: {
+          maxOverviewCount,
+          selectedOnly: selectedElements.length > 0,
+        },
       },
       null,
       2,
     );
   }
 
-  buildGlobalContext(): string {
-    const overview = this.store.getRenderableNodes().map((node) => this.simplifyNode(node));
-    return JSON.stringify({ canvasOverview: overview }, null, 2);
+  buildGlobalContext(maxNodes = 200): string {
+    const nodes = this.store.getRenderableNodes();
+    const sampled = nodes.slice(0, Math.max(0, maxNodes));
+    const overview = sampled.map((node) => this.simplifyNode(node));
+    return JSON.stringify(
+      {
+        canvasOverview: overview,
+        totalNodeCount: nodes.length,
+        truncated: nodes.length > sampled.length,
+      },
+      null,
+      2,
+    );
   }
 
   private simplifyNode(node: SceneNode): object {

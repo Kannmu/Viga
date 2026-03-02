@@ -10,6 +10,14 @@ export interface ModelConfig {
   systemPromptOverride?: string;
 }
 
+export interface ConnectionTestResult {
+  success: boolean;
+  latency: number;
+  status?: number;
+  models?: string[];
+  error?: string;
+}
+
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -45,11 +53,34 @@ export type DSLOperation =
   | {
       action: 'delete';
       targetId: string;
+    }
+  | {
+      action: 'group';
+      elementIds: string[];
+      name: string;
+    }
+  | {
+      action: 'align';
+      elementIds: string[];
+      alignment:
+        | 'left'
+        | 'center'
+        | 'right'
+        | 'top'
+        | 'middle'
+        | 'bottom'
+        | 'distribute-h'
+        | 'distribute-v';
+    }
+  | {
+      action: 'style';
+      targetId: string;
+      properties: Record<string, unknown>;
     };
 
 export interface DSLElement {
   id: string;
-  type: 'rectangle' | 'ellipse' | 'line' | 'text';
+  type: 'rectangle' | 'ellipse' | 'line' | 'text' | 'frame' | 'polygon' | 'star' | 'path' | 'group';
   name?: string;
   x: number;
   y: number;
@@ -57,5 +88,8 @@ export interface DSLElement {
   height?: number;
   text?: string;
   fontSize?: number;
+  fontFamily?: string;
+  fontWeight?: number;
   fill?: string;
+  pathData?: string;
 }

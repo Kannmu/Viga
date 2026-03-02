@@ -80,3 +80,7 @@ export interface DocumentData {
 export interface HitResult {
   nodeId: NodeId;
 }
+
+export type EditableNodePatch = Partial<
+  Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'opacity' | 'fills' | 'name'>
+>;

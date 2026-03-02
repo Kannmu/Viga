@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { Color, DocumentData, NodeId, RectangleNode, SceneNode } from './types';
+import type { Color, DocumentData, NodeId, RectangleNode, SceneNode, TextNode } from './types';
 
 const white: Color = { r: 1, g: 1, b: 1, a: 1 };
 
@@ -28,6 +28,59 @@ export function createRectangleNode(x: number, y: number, width: number, height:
     locked: false,
     fills: [{ type: 'solid', color: white }],
     cornerRadii: [0, 0, 0, 0],
+  };
+}
+
+export function createEllipseNode(x: number, y: number, width: number, height: number): SceneNode {
+  return {
+    id: nanoid(),
+    type: 'ellipse',
+    name: 'Ellipse',
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fills: [{ type: 'solid', color: white }],
+  };
+}
+
+export function createLineNode(x: number, y: number, width: number, height: number): SceneNode {
+  return {
+    id: nanoid(),
+    type: 'line',
+    name: 'Line',
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fills: [{ type: 'solid', color: { r: 0.22, g: 0.51, b: 0.96, a: 1 } }],
+  };
+}
+
+export function createTextNode(x: number, y: number, text: string): TextNode {
+  return {
+    id: nanoid(),
+    type: 'text',
+    name: 'Text',
+    x,
+    y,
+    width: Math.max(40, text.length * 9),
+    height: 24,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fills: [{ type: 'solid', color: { r: 0.11, g: 0.16, b: 0.26, a: 1 } }],
+    characters: text,
+    fontSize: 18,
   };
 }
 
@@ -81,6 +134,17 @@ export class DocumentStore {
     const before = structuredClone(node);
     this.document.nodes[id] = { ...node, ...patch } as SceneNode;
     return before;
+  }
+
+  moveNodes(ids: NodeId[], dx: number, dy: number): void {
+    for (const id of ids) {
+      const node = this.document.nodes[id];
+      if (!node || node.locked) {
+        continue;
+      }
+      node.x += dx;
+      node.y += dy;
+    }
   }
 
   getNode(id: NodeId): SceneNode | null {

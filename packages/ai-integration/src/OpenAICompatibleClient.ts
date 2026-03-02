@@ -11,7 +11,8 @@ export class OpenAICompatibleClient {
 
   async *streamChat(config: ModelConfig, messages: OpenAIMessage[]): AsyncGenerator<StreamChunk> {
     const apiKey = await this.getApiKey(config.id);
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+    const baseUrl = config.baseUrl.replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -46,25 +47,31 @@ export class OpenAICompatibleClient {
       }
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) {
-          continue;
-        }
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') {
-          return;
-        }
-        try {
-          const parsed = JSON.parse(data);
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            yield { type: 'content', content };
+      for (const rawEvent of events) {
+        const lines = rawEvent
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean);
+        for (const line of lines) {
+          if (!line.startsWith('data:')) {
+            continue;
           }
-        } catch {
-          // ignore invalid partial lines
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) {
+              yield { type: 'content', content };
+            }
+          } catch {
+            // ignore invalid event payloads
+          }
         }
       }
     }
