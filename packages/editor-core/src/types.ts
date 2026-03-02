@@ -82,5 +82,9 @@ export interface HitResult {
 }
 
 export type EditableNodePatch = Partial<
-  Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'opacity' | 'fills' | 'name'>
->;
+  Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'visible' | 'locked' | 'fills' | 'name'>
+> & {
+  cornerRadii?: [number, number, number, number];
+  characters?: string;
+  fontSize?: number;
+};

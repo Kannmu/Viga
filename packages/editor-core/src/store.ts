@@ -66,9 +66,17 @@ function sanitizePatch(patch: EditableNodePatch): EditableNodePatch {
   if (typeof patch.y === 'number') clean.y = patch.y;
   if (typeof patch.width === 'number') clean.width = Math.max(1, patch.width);
   if (typeof patch.height === 'number') clean.height = Math.max(1, patch.height);
+  if (typeof patch.rotation === 'number') clean.rotation = patch.rotation;
   if (typeof patch.opacity === 'number') clean.opacity = Math.min(1, Math.max(0, patch.opacity));
+  if (typeof patch.visible === 'boolean') clean.visible = patch.visible;
+  if (typeof patch.locked === 'boolean') clean.locked = patch.locked;
   if (typeof patch.name === 'string') clean.name = patch.name;
   if (Array.isArray(patch.fills)) clean.fills = patch.fills;
+  if (Array.isArray(patch.cornerRadii) && patch.cornerRadii.length === 4) {
+    clean.cornerRadii = patch.cornerRadii.map((value) => Math.max(0, value)) as [number, number, number, number];
+  }
+  if (typeof patch.characters === 'string') clean.characters = patch.characters;
+  if (typeof patch.fontSize === 'number') clean.fontSize = Math.max(1, patch.fontSize);
   return clean;
 }
 

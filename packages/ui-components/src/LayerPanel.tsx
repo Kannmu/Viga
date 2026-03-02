@@ -8,25 +8,19 @@ interface LayerPanelProps {
 
 export function LayerPanel({ nodes, selectedIds, onSelectNode }: LayerPanelProps): JSX.Element {
   return (
-    <section style={{ borderTop: '1px solid #d1d5db', background: '#fff', padding: 10, overflow: 'auto' }}>
-      <div style={{ marginBottom: 8, fontWeight: 600, fontSize: 13 }}>Layers</div>
+    <section className="viga-panel viga-layer-panel">
+      <div className="viga-panel-title">Layers</div>
       {[...nodes].reverse().map((node) => (
         <div
           key={node.id}
           onClick={(event) => onSelectNode?.(node.id, event.shiftKey)}
-          style={{
-            padding: '6px 8px',
-            borderRadius: 6,
-            marginBottom: 4,
-            background: selectedIds.includes(node.id) ? '#dbeafe' : '#f9fafb',
-            border: '1px solid #e5e7eb',
-            fontSize: 12,
-            cursor: onSelectNode ? 'pointer' : 'default',
-          }}
+          className={`viga-layer-item ${selectedIds.includes(node.id) ? 'is-selected' : ''}`}
+          role={onSelectNode ? 'button' : undefined}
         >
           {node.name} ({node.type})
         </div>
       ))}
+      {nodes.length === 0 ? <div className="viga-empty">No layers yet.</div> : null}
     </section>
   );
 }

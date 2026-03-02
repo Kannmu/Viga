@@ -8,51 +8,27 @@ import {
   OpenAICompatibleClient,
   PromptEngine,
   type ChatMessage,
-  type ModelConfig,
 } from '@viga/ai-integration';
 import { ToolBar, PropertiesPanel, LayerPanel } from '@viga/ui-components';
-
-class BrowserKeyStore {
-  private readonly prefix = 'viga:key:';
-
-  async store(profileId: string, key: string): Promise<void> {
-    localStorage.setItem(`${this.prefix}${profileId}`, key);
-  }
-
-  async retrieve(profileId: string): Promise<string> {
-    const value = localStorage.getItem(`${this.prefix}${profileId}`);
-    if (!value) {
-      throw new Error('Missing API key for profile');
-    }
-    return value;
-  }
-
-  async remove(profileId: string): Promise<void> {
-    localStorage.removeItem(`${this.prefix}${profileId}`);
-  }
-}
-
-const DEFAULT_MODEL: ModelConfig = {
-  id: 'default',
-  name: 'Default',
-  baseUrl: 'https://api.openai.com',
-  modelName: 'gpt-4.1-mini',
-  apiKeyRef: 'default',
-  maxTokens: 1200,
-  temperature: 0.3,
-  topP: 1,
-};
+import { AiPanel } from './components/AiPanel';
+import { BrowserKeyStore } from './ai/browserKeyStore';
+import { DEFAULT_MODEL } from './ai/defaultModel';
+import { createPreviewNode, getDraftGeometry, updateDraftPoint, type DrawDraft } from './canvas/draft';
 
 function App(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<WebGL2Renderer | null>(null);
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ panX: 0, panY: 0, zoom: 1 });
+  const [leftPanelWidth, setLeftPanelWidth] = useState(300);
+  const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const panStateRef = useRef<{ active: boolean; lastX: number; lastY: number }>({
     active: false,
     lastX: 0,
     lastY: 0,
   });
+  const panelResizeRef = useRef<{ side: 'left' | 'right'; startX: number; startWidth: number } | null>(null);
+  const [drawDraft, setDrawDraft] = useState<DrawDraft | null>(null);
 
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -88,6 +64,7 @@ function App(): JSX.Element {
     () => (selectedIds.length === 1 ? documentStore.getNode(selectedIds[0]) : null),
     [documentStore, documentVersion, selectedIds],
   );
+  const previewNodes = useMemo(() => (drawDraft ? [createPreviewNode(drawDraft)] : []), [drawDraft]);
 
   const keyStore = useMemo(() => new BrowserKeyStore(), []);
   const modelManager = useMemo(() => new ModelConfigManager(keyStore), [keyStore]);
@@ -149,8 +126,8 @@ function App(): JSX.Element {
       return;
     }
     rendererRef.current.setViewport(viewport);
-    rendererRef.current.render(nodes, selectedIds);
-  }, [nodes, selectedIds, viewport]);
+    rendererRef.current.render(nodes, selectedIds, { previewNodes });
+  }, [nodes, selectedIds, viewport, previewNodes]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -178,6 +155,9 @@ function App(): JSX.Element {
       }
       if (e.key.toLowerCase() === 'l') {
         setTool(ToolType.Line);
+      }
+      if (e.key.toLowerCase() === 'p') {
+        setTool(ToolType.Pen);
       }
       if (e.key.toLowerCase() === 't') {
         setTool(ToolType.Text);
@@ -213,6 +193,37 @@ function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [clearSelection, deleteSelection, nudgeSelection, redo, selectAll, setTool, undo]);
 
+  useEffect(() => {
+    const minWidth = 240;
+    const maxWidth = 460;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const draft = panelResizeRef.current;
+      if (!draft) {
+        return;
+      }
+      if (draft.side === 'left') {
+        const next = Math.max(minWidth, Math.min(maxWidth, draft.startWidth + (event.clientX - draft.startX)));
+        setLeftPanelWidth(next);
+      } else {
+        const next = Math.max(minWidth, Math.min(maxWidth, draft.startWidth - (event.clientX - draft.startX)));
+        setRightPanelWidth(next);
+      }
+    };
+
+    const onMouseUp = () => {
+      panelResizeRef.current = null;
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
   const toCanvasPoint = (event: React.MouseEvent<HTMLCanvasElement>): { x: number; y: number } => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -241,14 +252,19 @@ function App(): JSX.Element {
         }
 
         const point = toCanvasPoint(e);
-        if (activeTool === ToolType.Rectangle || activeTool === ToolType.Ellipse) {
-          createShape(activeTool, point.x, point.y, 160, 100);
-          setTool(ToolType.Select);
-          return;
-        }
-        if (activeTool === ToolType.Line) {
-          createShape(activeTool, point.x, point.y, 160, 2);
-          setTool(ToolType.Select);
+        if (
+          activeTool === ToolType.Rectangle
+          || activeTool === ToolType.Ellipse
+          || activeTool === ToolType.Line
+          || activeTool === ToolType.Pen
+        ) {
+          setDrawDraft({
+            tool: activeTool,
+            startX: point.x,
+            startY: point.y,
+            currentX: point.x,
+            currentY: point.y,
+          });
           return;
         }
         if (activeTool === ToolType.Text) {
@@ -259,6 +275,8 @@ function App(): JSX.Element {
         beginPointerDrag(point.x, point.y, e.shiftKey);
       },
       onMouseMove: (e: React.MouseEvent<HTMLCanvasElement>) => {
+        const point = toCanvasPoint(e);
+
         if (panStateRef.current.active) {
           const dx = e.clientX - panStateRef.current.lastX;
           const dy = e.clientY - panStateRef.current.lastY;
@@ -267,15 +285,37 @@ function App(): JSX.Element {
           setViewport((curr) => ({ ...curr, panX: curr.panX + dx, panY: curr.panY + dy }));
           return;
         }
-        const point = toCanvasPoint(e);
+
+        if (drawDraft) {
+          setDrawDraft((curr) => (curr ? updateDraftPoint(curr, point.x, point.y) : curr));
+          return;
+        }
+
         updatePointerDrag(point.x, point.y);
       },
-      onMouseUp: () => {
+      onMouseUp: (e: React.MouseEvent<HTMLCanvasElement>) => {
         panStateRef.current.active = false;
+
+        if (drawDraft) {
+          const point = toCanvasPoint(e);
+          const finalDraft = updateDraftPoint(drawDraft, point.x, point.y);
+          const geometry = getDraftGeometry(finalDraft);
+          setDrawDraft(null);
+
+          if (finalDraft.tool === ToolType.Line || finalDraft.tool === ToolType.Pen) {
+            createShape(ToolType.Line, geometry.x, geometry.y, geometry.width, geometry.height);
+            return;
+          }
+
+          createShape(finalDraft.tool, geometry.x, geometry.y, geometry.width, geometry.height);
+          return;
+        }
+
         endPointerDrag();
       },
       onMouseLeave: () => {
         panStateRef.current.active = false;
+        setDrawDraft(null);
         endPointerDrag();
       },
       onWheel: (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -302,7 +342,7 @@ function App(): JSX.Element {
         }));
       },
     }),
-    [activeTool, beginPointerDrag, createShape, createText, endPointerDrag, setTool, updatePointerDrag],
+    [activeTool, beginPointerDrag, createShape, createText, drawDraft, endPointerDrag, setTool, updatePointerDrag],
   );
 
   const runAiCommand = async (): Promise<void> => {
@@ -378,100 +418,90 @@ function App(): JSX.Element {
     <div className="app-shell">
       <header className="menu-bar">Viga</header>
       <div className="workspace">
-        <ToolBar activeTool={activeTool} onToolChange={setTool} />
-        <div className="canvas-zone">
-          <canvas ref={canvasRef} className="canvas" {...mouseHandlers} />
+        <div
+          className="canvas-zone"
+          style={{
+            ['--left-panel-width' as string]: `${leftPanelWidth}px`,
+            ['--right-panel-width' as string]: `${rightPanelWidth}px`,
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            className="canvas"
+            style={{ cursor: activeTool === ToolType.Hand ? 'grab' : drawDraft ? 'crosshair' : 'default' }}
+            {...mouseHandlers}
+          />
           {rendererError ? <p className="canvas-error">{rendererError}</p> : null}
           <div className="viewport-chip">{Math.round(viewport.zoom * 100)}%</div>
-        </div>
-        <PropertiesPanel
-          selectedCount={selectedIds.length}
-          selectedNode={selectedNode}
-          onPatchSelection={updateSelectionStyles}
-        />
-      </div>
-      <div className="bottom-panels">
-        <LayerPanel
-          nodes={nodes}
-          selectedIds={selectedIds}
-          onSelectNode={(id, append) => {
-            if (append) {
-              const next = selectedIds.includes(id)
-                ? selectedIds.filter((existing) => existing !== id)
-                : [...selectedIds, id];
-              setSelectedIds(next);
-            } else {
-              setSelectedIds([id]);
-            }
-          }}
-        />
-        <section className="ai-panel">
-          <div className="ai-panel-head">AI</div>
-          <div className="ai-model-grid">
-            <select
-              value={modelDraft.id}
-              onChange={(e) => {
-                const next = modelConfigs.find((cfg) => cfg.id === e.target.value);
-                if (next) {
-                  modelManager.setActive(next.id);
-                  setModelDraft(next);
+          <div className="tool-dock">
+            <ToolBar activeTool={activeTool} onToolChange={setTool} orientation="horizontal" />
+          </div>
+
+          <aside className="floating-panel floating-left" style={{ width: leftPanelWidth }}>
+            <LayerPanel
+              nodes={nodes}
+              selectedIds={selectedIds}
+              onSelectNode={(id, append) => {
+                if (append) {
+                  const next = selectedIds.includes(id)
+                    ? selectedIds.filter((existing) => existing !== id)
+                    : [...selectedIds, id];
+                  setSelectedIds(next);
+                } else {
+                  setSelectedIds([id]);
                 }
               }}
-            >
-              <option value={modelDraft.id}>{modelDraft.name || modelDraft.id}</option>
-              {modelConfigs
-                .filter((cfg) => cfg.id !== modelDraft.id)
-                .map((cfg) => (
-                  <option key={cfg.id} value={cfg.id}>
-                    {cfg.name}
-                  </option>
-                ))}
-            </select>
-            <input
-              placeholder="Base URL"
-              value={modelDraft.baseUrl}
-              onChange={(e) => setModelDraft((curr) => ({ ...curr, baseUrl: e.target.value }))}
             />
-            <input
-              placeholder="Model"
-              value={modelDraft.modelName}
-              onChange={(e) => setModelDraft((curr) => ({ ...curr, modelName: e.target.value }))}
+            <AiPanel
+              modelDraft={modelDraft}
+              modelConfigs={modelConfigs}
+              chatHistory={chatHistory}
+              chatInput={chatInput}
+              chatStreaming={chatStreaming}
+              chatError={chatError}
+              testStatus={testStatus}
+              apiKeyDraft={apiKeyDraft}
+              onChatInputChange={setChatInput}
+              onSelectModel={(modelId) => {
+                const next = modelConfigs.find((cfg) => cfg.id === modelId);
+                if (!next) {
+                  return;
+                }
+                modelManager.setActive(next.id);
+                setModelDraft(next);
+              }}
+              onPatchModelDraft={(patch) => setModelDraft((curr) => ({ ...curr, ...patch }))}
+              onApiKeyDraftChange={setApiKeyDraft}
+              onRun={runAiCommand}
+              onSaveModel={saveModelConfig}
+              onTestModel={testModelConfig}
             />
-            <input
-              placeholder="API Key"
-              type="password"
-              value={apiKeyDraft}
-              onChange={(e) => setApiKeyDraft(e.target.value)}
-            />
-            <div className="ai-actions">
-              <button type="button" onClick={saveModelConfig}>Save</button>
-              <button type="button" onClick={testModelConfig}>Test</button>
-            </div>
-            {testStatus ? <div className="ai-status">{testStatus}</div> : null}
-          </div>
+          </aside>
 
-          <div className="ai-chat-log">
-            {chatHistory.length === 0 ? <div className="ai-empty">Describe what to draw or edit.</div> : null}
-            {chatHistory.map((msg, idx) => (
-              <div key={`${msg.role}-${idx}`} className={`ai-msg ai-msg-${msg.role}`}>
-                {msg.content}
-              </div>
-            ))}
-          </div>
+          <div
+            className="panel-resizer panel-resizer-left"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              panelResizeRef.current = { side: 'left', startX: event.clientX, startWidth: leftPanelWidth };
+            }}
+          />
 
-          <div className="ai-chat-input-row">
-            <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Create a simple landing hero with title and button"
-              className="ai-chat-input"
+          <aside className="floating-panel floating-right" style={{ width: rightPanelWidth }}>
+            <PropertiesPanel
+              selectedCount={selectedIds.length}
+              selectedNode={selectedNode}
+              onPatchSelection={updateSelectionStyles}
             />
-            <button type="button" onClick={runAiCommand} disabled={chatStreaming}>
-              {chatStreaming ? 'Running...' : 'Run'}
-            </button>
-          </div>
-          {chatError ? <div className="ai-error">{chatError}</div> : null}
-        </section>
+          </aside>
+
+          <div
+            className="panel-resizer panel-resizer-right"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              panelResizeRef.current = { side: 'right', startX: event.clientX, startWidth: rightPanelWidth };
+            }}
+          />
+        </div>
       </div>
     </div>
   );

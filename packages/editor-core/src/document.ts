@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { Color, DocumentData, NodeId, RectangleNode, SceneNode, TextNode } from './types';
 
-const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+const defaultShapeFill: Color = { r: 0.36, g: 0.6, b: 0.96, a: 1 };
 
 export function createEmptyDocument(name = 'Untitled'): DocumentData {
   return {
@@ -26,7 +26,7 @@ export function createRectangleNode(x: number, y: number, width: number, height:
     opacity: 1,
     visible: true,
     locked: false,
-    fills: [{ type: 'solid', color: white }],
+    fills: [{ type: 'solid', color: defaultShapeFill }],
     cornerRadii: [0, 0, 0, 0],
   };
 }
@@ -44,7 +44,7 @@ export function createEllipseNode(x: number, y: number, width: number, height: n
     opacity: 1,
     visible: true,
     locked: false,
-    fills: [{ type: 'solid', color: white }],
+    fills: [{ type: 'solid', color: defaultShapeFill }],
   };
 }
 

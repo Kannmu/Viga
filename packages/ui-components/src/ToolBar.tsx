@@ -4,6 +4,7 @@ import { ToolType as ToolTypes } from '@viga/editor-core';
 interface ToolBarProps {
   activeTool: ToolType;
   onToolChange: (tool: ToolType) => void;
+  orientation?: 'vertical' | 'horizontal';
 }
 
 const TOOLS: { id: ToolType; label: string; keyHint: string }[] = [
@@ -16,32 +17,21 @@ const TOOLS: { id: ToolType; label: string; keyHint: string }[] = [
   { id: ToolTypes.Hand, label: 'Hand', keyHint: 'H' },
 ];
 
-export function ToolBar({ activeTool, onToolChange }: ToolBarProps): JSX.Element {
+export function ToolBar({ activeTool, onToolChange, orientation = 'vertical' }: ToolBarProps): JSX.Element {
+  const horizontal = orientation === 'horizontal';
+
   return (
-    <aside style={{ borderRight: '1px solid #d1d5db', background: '#fff', padding: 8 }}>
+    <aside className={`viga-toolbar ${horizontal ? 'is-horizontal' : 'is-vertical'}`}>
       {TOOLS.map((tool) => (
         <button
           key={tool.id}
           type="button"
           onClick={() => onToolChange(tool.id)}
           title={`${tool.label} (${tool.keyHint})`}
-          style={{
-            display: 'block',
-            width: '100%',
-            marginBottom: 8,
-            minHeight: 38,
-            borderRadius: 8,
-            border: tool.id === activeTool ? '2px solid #3b82f6' : '1px solid #d1d5db',
-            background: tool.id === activeTool ? '#dbeafe' : '#f9fafb',
-            fontWeight: 600,
-            cursor: 'pointer',
-            textAlign: 'left',
-            padding: '7px 9px',
-            fontSize: 12,
-          }}
+          className={`viga-toolbar-btn ${tool.id === activeTool ? 'is-active' : ''}`}
         >
-          {tool.label}
-          <span style={{ float: 'right', opacity: 0.65 }}>{tool.keyHint}</span>
+          <span>{tool.label}</span>
+          <span className="viga-toolbar-key">{tool.keyHint}</span>
         </button>
       ))}
     </aside>

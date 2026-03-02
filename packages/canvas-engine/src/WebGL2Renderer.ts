@@ -1,5 +1,9 @@
 import type { SceneNode, NodeId } from '@viga/editor-core';
 
+interface RenderOptions {
+  previewNodes?: SceneNode[];
+}
+
 const VERT = `#version 300 es
 precision highp float;
 layout(location = 0) in vec2 a_position;
@@ -124,7 +128,7 @@ export class WebGL2Renderer {
     };
   }
 
-  render(nodes: SceneNode[], selectedIds: NodeId[] = []): void {
+  render(nodes: SceneNode[], selectedIds: NodeId[] = [], options: RenderOptions = {}): void {
     const gl = this.gl;
     gl.clearColor(1, 1, 1, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
@@ -132,7 +136,10 @@ export class WebGL2Renderer {
     gl.bindVertexArray(this.vao);
     gl.uniform2f(this.uResolution, this.canvas.width, this.canvas.height);
 
-    for (const node of nodes) {
+    const previewNodes = options.previewNodes ?? [];
+    const renderQueue = previewNodes.length > 0 ? [...nodes, ...previewNodes] : nodes;
+
+    for (const node of renderQueue) {
       if (!node.visible) {
         continue;
       }
@@ -143,9 +150,7 @@ export class WebGL2Renderer {
       const h = node.height;
 
       if (node.type === 'line') {
-        const lineVertices = this.toScreenVertices(
-          new Float32Array([x, y, x + w, y + h]),
-        );
+        const lineVertices = this.toScreenVertices(this.getLinePoints(node));
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
         gl.bufferData(gl.ARRAY_BUFFER, lineVertices, gl.DYNAMIC_DRAW);
         const lineFill = node.fills[0];
@@ -154,34 +159,15 @@ export class WebGL2Renderer {
         gl.lineWidth(1);
         gl.drawArrays(gl.LINES, 0, 2);
       } else if (node.type === 'ellipse') {
-        const segments = 36;
-        const centerX = x + w / 2;
-        const centerY = y + h / 2;
-        const rx = Math.abs(w / 2);
-        const ry = Math.abs(h / 2);
-        const fan: number[] = [centerX, centerY];
-        for (let i = 0; i <= segments; i += 1) {
-          const t = (i / segments) * Math.PI * 2;
-          fan.push(centerX + Math.cos(t) * rx, centerY + Math.sin(t) * ry);
-        }
-        const vertices = this.toScreenVertices(new Float32Array(fan));
+        const vertices = this.toScreenVertices(this.getEllipsePoints(node));
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
         gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
         const fill = node.fills[0];
         const c = fill?.type === 'solid' ? fill.color : { r: 0.9, g: 0.9, b: 0.9, a: 1 };
         gl.uniform4f(this.uColor, c.r, c.g, c.b, c.a * node.opacity);
-        gl.drawArrays(gl.TRIANGLE_FAN, 0, segments + 2);
+        gl.drawArrays(gl.TRIANGLE_FAN, 0, 38);
       } else {
-        const vertices = this.toScreenVertices(
-          new Float32Array([
-            x, y,
-            x + w, y,
-            x, y + h,
-            x, y + h,
-            x + w, y,
-            x + w, y + h,
-          ]),
-        );
+        const vertices = this.toScreenVertices(this.getRectTriangles(node));
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
         gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
 
@@ -196,15 +182,14 @@ export class WebGL2Renderer {
           const baselineY = y + Math.max(12, node.fontSize * 0.85);
           const glyphW = Math.max(6, node.fontSize * 0.55);
           const glyphH = Math.max(8, node.fontSize);
+          const textWidth = Math.max(glyphW, node.characters.length * glyphW);
           const textVertices = this.toScreenVertices(
-            new Float32Array([
-              x, baselineY - glyphH,
-              x + Math.max(glyphW, node.characters.length * glyphW), baselineY - glyphH,
-              x, baselineY,
-              x, baselineY,
-              x + Math.max(glyphW, node.characters.length * glyphW), baselineY - glyphH,
-              x + Math.max(glyphW, node.characters.length * glyphW), baselineY,
-            ]),
+            this.getRectTriangles({
+              ...node,
+              y: baselineY - glyphH,
+              width: textWidth,
+              height: glyphH,
+            }),
           );
           gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
           gl.bufferData(gl.ARRAY_BUFFER, textVertices, gl.DYNAMIC_DRAW);
@@ -215,7 +200,7 @@ export class WebGL2Renderer {
         }
       }
 
-      if (selectedIds.includes(node.id)) {
+      if (!node.id.startsWith('__draft_') && selectedIds.includes(node.id)) {
         this.drawOutline(x, y, w, h);
       }
     }
@@ -225,13 +210,14 @@ export class WebGL2Renderer {
 
   private drawOutline(x: number, y: number, w: number, h: number): void {
     const gl = this.gl;
+    const corners = this.getRectCorners({ x, y, width: w, height: h, rotation: 0 });
     const vertices = this.toScreenVertices(
       new Float32Array([
-        x, y,
-        x + w, y,
-        x + w, y + h,
-        x, y + h,
-        x, y,
+        corners[0], corners[1],
+        corners[2], corners[3],
+        corners[4], corners[5],
+        corners[6], corners[7],
+        corners[0], corners[1],
       ]),
     );
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
@@ -254,5 +240,85 @@ export class WebGL2Renderer {
       out[i + 1] = canvasVertices[i + 1] * this.viewport.zoom + this.viewport.panY;
     }
     return out;
+  }
+
+  private getRectTriangles(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
+    const corners = this.getRectCorners(node);
+    return new Float32Array([
+      corners[0], corners[1],
+      corners[2], corners[3],
+      corners[6], corners[7],
+      corners[6], corners[7],
+      corners[2], corners[3],
+      corners[4], corners[5],
+    ]);
+  }
+
+  private getRectCorners(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
+    const x = node.x;
+    const y = node.y;
+    const w = node.width;
+    const h = node.height;
+    const rotation = this.toRadians(node.rotation);
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+
+    return new Float32Array([
+      ...this.rotatePoint(x, y, cx, cy, rotation),
+      ...this.rotatePoint(x + w, y, cx, cy, rotation),
+      ...this.rotatePoint(x + w, y + h, cx, cy, rotation),
+      ...this.rotatePoint(x, y + h, cx, cy, rotation),
+    ]);
+  }
+
+  private getLinePoints(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
+    const rotation = this.toRadians(node.rotation);
+    const x1 = node.x;
+    const y1 = node.y;
+    const x2 = node.x + node.width;
+    const y2 = node.y + node.height;
+    if (rotation === 0) {
+      return new Float32Array([x1, y1, x2, y2]);
+    }
+    const centerX = (x1 + x2) / 2;
+    const centerY = (y1 + y2) / 2;
+    const [rx1, ry1] = this.rotatePoint(x1, y1, centerX, centerY, rotation);
+    const [rx2, ry2] = this.rotatePoint(x2, y2, centerX, centerY, rotation);
+    return new Float32Array([rx1, ry1, rx2, ry2]);
+  }
+
+  private getEllipsePoints(node: Pick<SceneNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>): Float32Array {
+    const segments = 36;
+    const centerX = node.x + node.width / 2;
+    const centerY = node.y + node.height / 2;
+    const rx = Math.abs(node.width / 2);
+    const ry = Math.abs(node.height / 2);
+    const rotation = this.toRadians(node.rotation);
+    const fan: number[] = [centerX, centerY];
+
+    for (let i = 0; i <= segments; i += 1) {
+      const t = (i / segments) * Math.PI * 2;
+      const px = centerX + Math.cos(t) * rx;
+      const py = centerY + Math.sin(t) * ry;
+      const [rxPoint, ryPoint] = this.rotatePoint(px, py, centerX, centerY, rotation);
+      fan.push(rxPoint, ryPoint);
+    }
+
+    return new Float32Array(fan);
+  }
+
+  private rotatePoint(x: number, y: number, cx: number, cy: number, angle: number): [number, number] {
+    if (angle === 0) {
+      return [x, y];
+    }
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const dx = x - cx;
+    const dy = y - cy;
+    return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+  }
+
+  private toRadians(deg: number): number {
+    return (deg * Math.PI) / 180;
   }
 }
