@@ -4,3 +4,4 @@ export declare class BrowserKeyStore {
     retrieve(profileId: string): Promise<string>;
     remove(profileId: string): Promise<void>;
 }
+export declare const runtimeFetch: typeof fetch;

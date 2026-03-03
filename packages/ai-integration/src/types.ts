@@ -1,6 +1,8 @@
 export interface ModelConfig {
   id: string;
   name: string;
+  provider: 'openai-compatible';
+  apiProtocol?: 'chat-completions' | 'responses';
   baseUrl: string;
   modelName: string;
   apiKeyRef: string;
@@ -19,14 +21,126 @@ export interface ConnectionTestResult {
 }
 
 export interface OpenAIMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_calls?: OpenAIToolCall[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 export interface StreamChunk {
   type: 'content';
   content: string;
 }
+
+export interface OpenAITool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties?: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+    strict?: boolean;
+  };
+}
+
+export type OpenAIToolChoice
+  = 'auto'
+  | 'required'
+  | 'none'
+  | {
+      type: 'function';
+      function: {
+        name: string;
+      };
+    }
+  | {
+      type: 'allowed_tools';
+      mode: 'auto' | 'required';
+      tools: Array<{
+        type: 'function';
+        function: {
+          name: string;
+        };
+      }>;
+    };
+
+export interface OpenAIToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface OpenAIChatCompletionResponse {
+  choices?: Array<{
+    finish_reason?: string;
+    message?: {
+      role?: 'assistant';
+      content?: string | null;
+      reasoning?: string | null;
+      tool_calls?: OpenAIToolCall[];
+    };
+  }>;
+}
+
+export interface OpenAIResponsesFunctionCall {
+  type: 'function_call';
+  call_id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface OpenAIResponsesOutputMessage {
+  type: 'message';
+  role?: 'assistant';
+  content?: Array<{
+    type?: string;
+    text?: string;
+  }>;
+}
+
+export interface OpenAIResponsesResponse {
+  id: string;
+  output?: Array<OpenAIResponsesFunctionCall | OpenAIResponsesOutputMessage | { type?: string }>;
+}
+
+export type ToolCallingProgressEvent
+  = {
+      type: 'status';
+      message: string;
+    }
+  | {
+      type: 'assistant';
+      content: string;
+      partial: boolean;
+    }
+  | {
+      type: 'reasoning';
+      content: string;
+    }
+  | {
+      type: 'tool-call';
+      id: string;
+      name: string;
+      arguments: string;
+    }
+  | {
+      type: 'tool-result';
+      id: string;
+      name: string;
+      output: string;
+    }
+  | {
+      type: 'done';
+      finalMessage: string;
+    };
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -86,6 +200,7 @@ export interface DSLElement {
   y: number;
   width?: number;
   height?: number;
+  rotation?: number;
   text?: string;
   fontSize?: number;
   fontFamily?: string;

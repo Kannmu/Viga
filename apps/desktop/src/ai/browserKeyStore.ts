@@ -1,3 +1,5 @@
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+
 export class BrowserKeyStore {
   private readonly prefix = 'viga:key:';
 
@@ -17,3 +19,21 @@ export class BrowserKeyStore {
     localStorage.removeItem(`${this.prefix}${profileId}`);
   }
 }
+
+function isTauriRuntime(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const marker = window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(marker.__TAURI__ || marker.__TAURI_INTERNALS__);
+}
+
+export const runtimeFetch: typeof fetch = (input, init) => {
+  if (!isTauriRuntime()) {
+    return fetch(input, init);
+  }
+  return tauriFetch(input as RequestInfo | URL, init as RequestInit) as Promise<Response>;
+};

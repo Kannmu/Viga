@@ -1,4 +1,9 @@
-const MIN_SIZE = 2;
+const MIN_DRAG_DISTANCE = 2;
+export function hasMeaningfulDraft(draft) {
+    const dx = Math.abs(draft.currentX - draft.startX);
+    const dy = Math.abs(draft.currentY - draft.startY);
+    return dx >= MIN_DRAG_DISTANCE || dy >= MIN_DRAG_DISTANCE;
+}
 export function updateDraftPoint(draft, x, y) {
     return {
         ...draft,
@@ -10,20 +15,18 @@ export function getDraftGeometry(draft) {
     const dx = draft.currentX - draft.startX;
     const dy = draft.currentY - draft.startY;
     if (draft.tool === 'line' || draft.tool === 'pen') {
-        const tinyDraw = Math.abs(dx) < MIN_SIZE && Math.abs(dy) < MIN_SIZE;
         return {
             x: draft.startX,
             y: draft.startY,
-            width: tinyDraw ? 120 : dx,
-            height: tinyDraw ? 0 : dy,
+            width: dx,
+            height: dy,
         };
     }
-    const tinyDraw = Math.abs(dx) < MIN_SIZE && Math.abs(dy) < MIN_SIZE;
     return {
-        x: tinyDraw ? draft.startX : Math.min(draft.startX, draft.currentX),
-        y: tinyDraw ? draft.startY : Math.min(draft.startY, draft.currentY),
-        width: tinyDraw ? 160 : Math.max(MIN_SIZE, Math.abs(dx)),
-        height: tinyDraw ? 100 : Math.max(MIN_SIZE, Math.abs(dy)),
+        x: Math.min(draft.startX, draft.currentX),
+        y: Math.min(draft.startY, draft.currentY),
+        width: Math.abs(dx),
+        height: Math.abs(dy),
     };
 }
 export function createPreviewNode(draft) {

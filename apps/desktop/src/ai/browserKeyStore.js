@@ -1,3 +1,4 @@
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 export class BrowserKeyStore {
     prefix = 'viga:key:';
     async store(profileId, key) {
@@ -14,4 +15,17 @@ export class BrowserKeyStore {
         localStorage.removeItem(`${this.prefix}${profileId}`);
     }
 }
+function isTauriRuntime() {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+    const marker = window;
+    return Boolean(marker.__TAURI__ || marker.__TAURI_INTERNALS__);
+}
+export const runtimeFetch = (input, init) => {
+    if (!isTauriRuntime()) {
+        return fetch(input, init);
+    }
+    return tauriFetch(input, init);
+};
 //# sourceMappingURL=browserKeyStore.js.map

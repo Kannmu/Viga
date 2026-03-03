@@ -1,40 +1,24 @@
 import { useEffect, useRef } from 'react';
-import type { ChatMessage, ModelConfig } from '@viga/ai-integration';
+import type { ChatMessage, ToolCallingProgressEvent } from '@viga/ai-integration';
 
 interface AiPanelProps {
-  modelDraft: ModelConfig;
-  modelConfigs: ModelConfig[];
   chatHistory: ChatMessage[];
   chatInput: string;
   chatStreaming: boolean;
+  progressEvents: ToolCallingProgressEvent[];
   chatError: string | null;
-  testStatus: string;
-  apiKeyDraft: string;
   onChatInputChange: (value: string) => void;
-  onSelectModel: (modelId: string) => void;
-  onPatchModelDraft: (patch: Partial<ModelConfig>) => void;
-  onApiKeyDraftChange: (value: string) => void;
   onRun: () => void;
-  onSaveModel: () => void;
-  onTestModel: () => void;
 }
 
 export function AiPanel({
-  modelDraft,
-  modelConfigs,
   chatHistory,
   chatInput,
   chatStreaming,
+  progressEvents,
   chatError,
-  testStatus,
-  apiKeyDraft,
   onChatInputChange,
-  onSelectModel,
-  onPatchModelDraft,
-  onApiKeyDraftChange,
   onRun,
-  onSaveModel,
-  onTestModel,
 }: AiPanelProps): JSX.Element {
   const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -43,7 +27,15 @@ export function AiPanel({
       return;
     }
     logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [chatHistory, chatStreaming]);
+  }, [chatHistory, chatStreaming, progressEvents]);
+
+  const formatJsonLine = (raw: string): string => {
+    try {
+      return JSON.stringify(JSON.parse(raw));
+    } catch {
+      return raw;
+    }
+  };
 
   return (
     <section className="ai-panel">
@@ -52,9 +44,6 @@ export function AiPanel({
           <strong>AI Assistant</strong>
           <span>{chatStreaming ? 'Streaming response...' : 'Ready for prompts'}</span>
         </div>
-        <button type="button" onClick={onRun} disabled={chatStreaming || !chatInput.trim()}>
-          {chatStreaming ? 'Running...' : 'Run'}
-        </button>
       </div>
 
       <div ref={logRef} className="ai-chat-log">
@@ -65,7 +54,69 @@ export function AiPanel({
             {msg.content}
           </div>
         ))}
-        {chatStreaming ? <div className="ai-msg ai-msg-assistant ai-typing">Thinking...</div> : null}
+        {chatStreaming ? (
+          <div className="ai-msg ai-msg-assistant ai-live-stream">
+            <div className="ai-msg-role">Assistant</div>
+            {progressEvents.length === 0 ? <div className="ai-typing">Thinking...</div> : null}
+            {progressEvents.map((event, idx) => {
+              if (event.type === 'status') {
+                return <div key={`status-${idx}`} className="ai-stream-line ai-stream-status">[status] {event.message}</div>;
+              }
+              if (event.type === 'reasoning') {
+                return <div key={`reasoning-${idx}`} className="ai-stream-line ai-stream-reasoning">[reasoning] {event.content}</div>;
+              }
+              if (event.type === 'assistant') {
+                return <div key={`assistant-${idx}`} className="ai-stream-line ai-stream-assistant">[assistant] {event.content}</div>;
+              }
+              if (event.type === 'done') {
+                return <div key={`done-${idx}`} className="ai-stream-line ai-stream-done">[done] {event.finalMessage || 'Completed'}</div>;
+              }
+              if (event.type === 'tool-call') {
+                return (
+                  <div key={`call-${event.id}-${idx}`} className="ai-stream-line ai-stream-tool-call">
+                    [tool-call] {event.name} args={formatJsonLine(event.arguments)}
+                  </div>
+                );
+              }
+              return (
+                <div key={`result-${event.id}-${idx}`} className="ai-stream-line ai-stream-tool-result">
+                  [tool-result] {event.name} output={formatJsonLine(event.output)}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {!chatStreaming && progressEvents.length > 0 ? (
+          <div className="ai-msg ai-msg-assistant ai-live-stream ai-live-stream-complete">
+            <div className="ai-msg-role">Last Run Trace</div>
+            {progressEvents.map((event, idx) => {
+              if (event.type === 'status') {
+                return <div key={`hist-status-${idx}`} className="ai-stream-line ai-stream-status">[status] {event.message}</div>;
+              }
+              if (event.type === 'reasoning') {
+                return <div key={`hist-reasoning-${idx}`} className="ai-stream-line ai-stream-reasoning">[reasoning] {event.content}</div>;
+              }
+              if (event.type === 'assistant') {
+                return <div key={`hist-assistant-${idx}`} className="ai-stream-line ai-stream-assistant">[assistant] {event.content}</div>;
+              }
+              if (event.type === 'done') {
+                return <div key={`hist-done-${idx}`} className="ai-stream-line ai-stream-done">[done] {event.finalMessage || 'Completed'}</div>;
+              }
+              if (event.type === 'tool-call') {
+                return (
+                  <div key={`hist-call-${event.id}-${idx}`} className="ai-stream-line ai-stream-tool-call">
+                    [tool-call] {event.name} args={formatJsonLine(event.arguments)}
+                  </div>
+                );
+              }
+              return (
+                <div key={`hist-result-${event.id}-${idx}`} className="ai-stream-line ai-stream-tool-result">
+                  [tool-result] {event.name} output={formatJsonLine(event.output)}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       <div className="ai-chat-input-row">
@@ -85,48 +136,6 @@ export function AiPanel({
           {chatStreaming ? 'Running...' : 'Run'}
         </button>
       </div>
-
-      <details className="ai-model-settings">
-        <summary>Model Settings</summary>
-        <div className="ai-model-grid">
-          <select value={modelDraft.id} onChange={(e) => onSelectModel(e.target.value)}>
-            <option value={modelDraft.id}>{modelDraft.name || modelDraft.id}</option>
-            {modelConfigs
-              .filter((cfg) => cfg.id !== modelDraft.id)
-              .map((cfg) => (
-                <option key={cfg.id} value={cfg.id}>
-                  {cfg.name}
-                </option>
-              ))}
-          </select>
-
-          <input
-            placeholder="Base URL"
-            value={modelDraft.baseUrl}
-            onChange={(e) => onPatchModelDraft({ baseUrl: e.target.value })}
-          />
-
-          <input
-            placeholder="Model"
-            value={modelDraft.modelName}
-            onChange={(e) => onPatchModelDraft({ modelName: e.target.value })}
-          />
-
-          <input
-            placeholder="API Key"
-            type="password"
-            value={apiKeyDraft}
-            onChange={(e) => onApiKeyDraftChange(e.target.value)}
-          />
-
-          <div className="ai-actions">
-            <button type="button" onClick={onSaveModel}>Save</button>
-            <button type="button" onClick={onTestModel}>Test</button>
-          </div>
-
-          {testStatus ? <div className="ai-status">{testStatus}</div> : null}
-        </div>
-      </details>
 
       {chatError ? <div className="ai-error">{chatError}</div> : null}
     </section>

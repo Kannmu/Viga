@@ -12,6 +12,7 @@ export interface ShapeGeometry {
     width: number;
     height: number;
 }
+export declare function hasMeaningfulDraft(draft: DrawDraft): boolean;
 export declare function updateDraftPoint(draft: DrawDraft, x: number, y: number): DrawDraft;
 export declare function getDraftGeometry(draft: DrawDraft): ShapeGeometry;
 export declare function createPreviewNode(draft: DrawDraft): SceneNode;

@@ -6,12 +6,14 @@ import {
   createTextNode,
 } from '@viga/editor-core';
 import {
+  AlignNodesCommand,
+  BatchCommand,
   CreateNodeCommand,
   DeleteNodesCommand,
   UpdateNodesCommand,
   type Command,
 } from '@viga/editor-core';
-import type { EditableNodePatch } from '@viga/editor-core';
+import type { EditableNodePatch, SceneNode } from '@viga/editor-core';
 import type { DSLElement, VigaDSL } from './types';
 
 const elementSchema = z.object({
@@ -22,6 +24,7 @@ const elementSchema = z.object({
   y: z.number(),
   width: z.number().optional(),
   height: z.number().optional(),
+  rotation: z.number().optional(),
   text: z.string().optional(),
   fontSize: z.number().optional(),
   fill: z.string().optional(),
@@ -145,7 +148,29 @@ export class DSLCompiler {
         continue;
       }
 
-      // group/align are accepted by schema but not yet compiled in MVP scaffold
+      if (op.action === 'group') {
+        const resolved = op.elementIds
+          .map((id) => this.resolveNodeId(id, createdIdMap))
+          .filter((id, index, all) => all.indexOf(id) === index);
+        if (resolved.length < 2) {
+          continue;
+        }
+        const groupName = op.name.trim() || 'Group';
+        commands.push(new UpdateNodesCommand(resolved, { name: groupName }));
+        continue;
+      }
+
+      if (op.action === 'align') {
+        const resolved = op.elementIds
+          .map((id) => this.resolveNodeId(id, createdIdMap))
+          .filter((id, index, all) => all.indexOf(id) === index);
+        if (resolved.length < 2) {
+          continue;
+        }
+        commands.push(new AlignNodesCommand(resolved, op.alignment));
+        continue;
+      }
+
     }
     return commands;
   }
@@ -168,7 +193,7 @@ export class DSLCompiler {
       if (fill) {
         node.fills = fill;
       }
-      return { command: new CreateNodeCommand(node), createdId: node.id };
+      return { command: this.withTransformCommands(node, element), createdId: node.id };
     }
 
     if (element.type === 'ellipse') {
@@ -182,7 +207,7 @@ export class DSLCompiler {
       if (fill) {
         node.fills = fill;
       }
-      return { command: new CreateNodeCommand(node), createdId: node.id };
+      return { command: this.withTransformCommands(node, element), createdId: node.id };
     }
 
     if (element.type === 'line') {
@@ -196,7 +221,7 @@ export class DSLCompiler {
       if (fill) {
         node.fills = fill;
       }
-      return { command: new CreateNodeCommand(node), createdId: node.id };
+      return { command: this.withTransformCommands(node, element), createdId: node.id };
     }
 
     if (element.type === 'text') {
@@ -214,7 +239,7 @@ export class DSLCompiler {
       if (fill) {
         node.fills = fill;
       }
-      return { command: new CreateNodeCommand(node), createdId: node.id };
+      return { command: this.withTransformCommands(node, element), createdId: node.id };
     }
 
     const fallback = createRectangleNode(
@@ -227,6 +252,18 @@ export class DSLCompiler {
     if (fill) {
       fallback.fills = fill;
     }
-    return { command: new CreateNodeCommand(fallback), createdId: fallback.id };
+    return { command: this.withTransformCommands(fallback, element), createdId: fallback.id };
+  }
+
+  private withTransformCommands(node: SceneNode, element: DSLElement): Command {
+    const parts: Command[] = [new CreateNodeCommand(node)];
+    if (typeof element.rotation === 'number') {
+      parts.push(new UpdateNodesCommand([node.id], { rotation: element.rotation }));
+    }
+
+    if (parts.length === 1) {
+      return parts[0];
+    }
+    return new BatchCommand(parts, 'Create Node with Transform');
   }
 }

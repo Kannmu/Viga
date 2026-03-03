@@ -3,6 +3,8 @@ import type { ModelConfig } from '@viga/ai-integration';
 export const DEFAULT_MODEL: ModelConfig = {
   id: 'default',
   name: 'Default',
+  provider: 'openai-compatible',
+  apiProtocol: 'chat-completions',
   baseUrl: 'https://api.openai.com',
   modelName: 'gpt-4.1-mini',
   apiKeyRef: 'default',

@@ -9,6 +9,13 @@
     "dialog:allow-save",
     "fs:allow-read",
     "fs:allow-write",
+    {
+      "identifier": "http:default",
+      "allow": [
+        "https://*",
+        "http://*"
+      ]
+    },
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:default"

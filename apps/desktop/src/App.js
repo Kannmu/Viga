@@ -5,31 +5,166 @@ import { WebGL2Renderer } from '@viga/canvas-engine';
 import { ContextBuilder, DSLCompiler, ModelConfigManager, OpenAICompatibleClient, PromptEngine, } from '@viga/ai-integration';
 import { ToolBar, PropertiesPanel, LayerPanel } from '@viga/ui-components';
 import { AiPanel } from './components/AiPanel';
-import { BrowserKeyStore } from './ai/browserKeyStore';
+import { BrowserKeyStore, runtimeFetch } from './ai/browserKeyStore';
 import { DEFAULT_MODEL } from './ai/defaultModel';
-import { createPreviewNode, getDraftGeometry, updateDraftPoint } from './canvas/draft';
+import { createPreviewNode, getDraftGeometry, hasMeaningfulDraft, updateDraftPoint, } from './canvas/draft';
+function toFiniteNumber(value, fallback = 0) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+function normalizeVigaDSL(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+    const source = raw;
+    const version = typeof source.version === 'string' ? source.version.trim() : '';
+    if (version !== '1.0' && version.toLowerCase() !== 'v1.0') {
+        return null;
+    }
+    if (!Array.isArray(source.operations)) {
+        return null;
+    }
+    const allowedElementTypes = new Set(['rectangle', 'ellipse', 'line', 'text', 'frame', 'polygon', 'star', 'path', 'group']);
+    const allowedAlignments = new Set(['left', 'center', 'right', 'top', 'middle', 'bottom', 'distribute-h', 'distribute-v']);
+    const seed = Date.now().toString(36);
+    const operations = [];
+    source.operations.forEach((item, index) => {
+        if (!item || typeof item !== 'object') {
+            return;
+        }
+        const op = item;
+        const action = typeof op.action === 'string'
+            ? op.action
+            : typeof op.type === 'string'
+                ? op.type
+                : '';
+        if (action === 'create') {
+            const elementSource = op.element && typeof op.element === 'object'
+                ? op.element
+                : null;
+            if (!elementSource) {
+                return;
+            }
+            const rawElementType = typeof elementSource.type === 'string' ? elementSource.type : 'rectangle';
+            const elementType = allowedElementTypes.has(rawElementType) ? rawElementType : 'rectangle';
+            const rx = toFiniteNumber(elementSource.rx, 0);
+            const ry = toFiniteNumber(elementSource.ry, 0);
+            const width = typeof elementSource.width === 'number' ? elementSource.width : (rx > 0 ? rx * 2 : undefined);
+            const height = typeof elementSource.height === 'number' ? elementSource.height : (ry > 0 ? ry * 2 : undefined);
+            const normalizedElement = {
+                id: typeof elementSource.id === 'string' && elementSource.id.trim()
+                    ? elementSource.id
+                    : `ai_${seed}_${index}`,
+                type: elementType,
+                x: toFiniteNumber(elementSource.x, 0),
+                y: toFiniteNumber(elementSource.y, 0),
+                ...(typeof width === 'number' ? { width } : {}),
+                ...(typeof height === 'number' ? { height } : {}),
+                ...(typeof elementSource.rotation === 'number' ? { rotation: elementSource.rotation } : {}),
+                ...(typeof elementSource.name === 'string' ? { name: elementSource.name } : {}),
+                ...(typeof elementSource.text === 'string' ? { text: elementSource.text } : {}),
+                ...(typeof elementSource.fontSize === 'number' ? { fontSize: elementSource.fontSize } : {}),
+                ...(typeof elementSource.fill === 'string' ? { fill: elementSource.fill } : {}),
+            };
+            operations.push({
+                action: 'create',
+                element: normalizedElement,
+            });
+            return;
+        }
+        if (action === 'modify') {
+            if (typeof op.targetId !== 'string' || !op.targetId.trim()) {
+                return;
+            }
+            operations.push({
+                action: 'modify',
+                targetId: op.targetId,
+                properties: op.properties && typeof op.properties === 'object'
+                    ? op.properties
+                    : {},
+            });
+            return;
+        }
+        if (action === 'style') {
+            if (typeof op.targetId !== 'string' || !op.targetId.trim()) {
+                return;
+            }
+            operations.push({
+                action: 'style',
+                targetId: op.targetId,
+                properties: op.properties && typeof op.properties === 'object'
+                    ? op.properties
+                    : {},
+            });
+            return;
+        }
+        if (action === 'delete') {
+            if (typeof op.targetId !== 'string' || !op.targetId.trim()) {
+                return;
+            }
+            operations.push({ action: 'delete', targetId: op.targetId });
+            return;
+        }
+        if (action === 'group') {
+            const elementIds = Array.isArray(op.elementIds)
+                ? op.elementIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+                : [];
+            if (elementIds.length < 2) {
+                return;
+            }
+            operations.push({
+                action: 'group',
+                elementIds,
+                name: typeof op.name === 'string' && op.name.trim() ? op.name : 'Group',
+            });
+            return;
+        }
+        if (action === 'align') {
+            const elementIds = Array.isArray(op.elementIds)
+                ? op.elementIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+                : [];
+            if (elementIds.length < 2 || typeof op.alignment !== 'string' || !allowedAlignments.has(op.alignment)) {
+                return;
+            }
+            operations.push({
+                action: 'align',
+                elementIds,
+                alignment: op.alignment,
+            });
+            return;
+        }
+    });
+    return {
+        version: '1.0',
+        operations,
+    };
+}
 function App() {
     const canvasRef = useRef(null);
     const rendererRef = useRef(null);
     const [rendererError, setRendererError] = useState(null);
     const [viewport, setViewport] = useState({ panX: 0, panY: 0, zoom: 1 });
-    const [leftPanelWidth, setLeftPanelWidth] = useState(300);
+    const [aiPanelWidth, setAiPanelWidth] = useState(360);
     const [rightPanelWidth, setRightPanelWidth] = useState(300);
+    const [rightStackSplit, setRightStackSplit] = useState(0.44);
     const panStateRef = useRef({
         active: false,
         lastX: 0,
         lastY: 0,
     });
     const panelResizeRef = useRef(null);
+    const rightStackRef = useRef(null);
+    const rightStackResizeRef = useRef(null);
     const [drawDraft, setDrawDraft] = useState(null);
     const [chatInput, setChatInput] = useState('');
     const [chatHistory, setChatHistory] = useState([]);
     const [chatStreaming, setChatStreaming] = useState(false);
+    const [progressEvents, setProgressEvents] = useState([]);
     const [chatError, setChatError] = useState(null);
     const [modelDraft, setModelDraft] = useState(DEFAULT_MODEL);
     const [apiKeyDraft, setApiKeyDraft] = useState('');
     const [testStatus, setTestStatus] = useState('');
     const [modelRevision, setModelRevision] = useState(0);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const activeTool = useEditorStore((s) => s.activeTool);
     const dragState = useEditorStore((s) => s.dragState);
     const documentStore = useEditorStore((s) => s.documentStore);
@@ -53,7 +188,7 @@ function App() {
     const loadDocument = useEditorStore((s) => s.loadDocument);
     const nodes = useMemo(() => documentStore.getRenderableNodes(), [documentStore, documentVersion]);
     const selectedNode = useMemo(() => (selectedIds.length === 1 ? documentStore.getNode(selectedIds[0]) : null), [documentStore, documentVersion, selectedIds]);
-    const previewNodes = useMemo(() => (drawDraft ? [createPreviewNode(drawDraft)] : []), [drawDraft]);
+    const previewNodes = useMemo(() => (drawDraft && hasMeaningfulDraft(drawDraft) ? [createPreviewNode(drawDraft)] : []), [drawDraft]);
     const marqueeBox = useMemo(() => {
         if (!dragState.active || dragState.mode !== 'marquee') {
             return null;
@@ -70,12 +205,53 @@ function App() {
         };
     }, [dragState, viewport.panX, viewport.panY, viewport.zoom]);
     const keyStore = useMemo(() => new BrowserKeyStore(), []);
-    const modelManager = useMemo(() => new ModelConfigManager(keyStore), [keyStore]);
-    const aiClient = useMemo(() => new OpenAICompatibleClient((profileId) => modelManager.getApiKeyForProfile(profileId)), [modelManager]);
+    const modelManager = useMemo(() => new ModelConfigManager(keyStore, runtimeFetch), [keyStore]);
+    const aiClient = useMemo(() => new OpenAICompatibleClient((profileId) => modelManager.getApiKeyForProfile(profileId), runtimeFetch), [modelManager]);
     const contextBuilder = useMemo(() => new ContextBuilder(documentStore), [documentStore]);
     const promptEngine = useMemo(() => new PromptEngine(), []);
     const dslCompiler = useMemo(() => new DSLCompiler(), []);
     const modelConfigs = useMemo(() => modelManager.list(), [modelManager, modelRevision]);
+    const aiTools = useMemo(() => [
+        {
+            type: 'function',
+            function: {
+                name: 'read_canvas_context',
+                description: 'Read selected nodes or global canvas overview before planning edits.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        scope: {
+                            type: 'string',
+                            enum: ['selection', 'global'],
+                            description: 'Read selection or full canvas context.',
+                        },
+                    },
+                    required: ['scope'],
+                    additionalProperties: false,
+                },
+                strict: true,
+            },
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'apply_canvas_commands',
+                description: 'Apply edits by sending a complete Viga DSL v1.0 payload.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        dsl: {
+                            type: 'object',
+                            description: 'A full Viga DSL object with version and operations.',
+                        },
+                    },
+                    required: ['dsl'],
+                    additionalProperties: false,
+                },
+                strict: true,
+            },
+        },
+    ], []);
     useEffect(() => {
         loadDocument(createEmptyDocument());
     }, [loadDocument]);
@@ -124,6 +300,15 @@ function App() {
     }, [nodes, selectedIds, viewport, previewNodes]);
     useEffect(() => {
         const onKeyDown = (e) => {
+            const target = e.target;
+            const inEditableField = Boolean(target
+                && (target instanceof HTMLInputElement
+                    || target instanceof HTMLTextAreaElement
+                    || target instanceof HTMLSelectElement
+                    || target.isContentEditable));
+            if (inEditableField) {
+                return;
+            }
             const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
             if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
                 e.preventDefault();
@@ -186,23 +371,27 @@ function App() {
     }, [clearSelection, deleteSelection, nudgeSelection, redo, selectAll, setTool, undo]);
     useEffect(() => {
         const minWidth = 240;
-        const maxWidth = 460;
+        const maxWidth = 520;
         const onMouseMove = (event) => {
             const draft = panelResizeRef.current;
-            if (!draft) {
-                return;
+            if (draft?.side === 'ai') {
+                const next = Math.max(280, Math.min(maxWidth, draft.startWidth + (event.clientX - draft.startX)));
+                setAiPanelWidth(next);
             }
-            if (draft.side === 'left') {
-                const next = Math.max(minWidth, Math.min(maxWidth, draft.startWidth + (event.clientX - draft.startX)));
-                setLeftPanelWidth(next);
-            }
-            else {
+            else if (draft?.side === 'right') {
                 const next = Math.max(minWidth, Math.min(maxWidth, draft.startWidth - (event.clientX - draft.startX)));
                 setRightPanelWidth(next);
+            }
+            const rightSplitDraft = rightStackResizeRef.current;
+            if (rightSplitDraft) {
+                const delta = event.clientY - rightSplitDraft.startY;
+                const ratio = rightSplitDraft.startSplit + delta / Math.max(1, rightSplitDraft.height);
+                setRightStackSplit(Math.max(0.22, Math.min(0.78, ratio)));
             }
         };
         const onMouseUp = () => {
             panelResizeRef.current = null;
+            rightStackResizeRef.current = null;
         };
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
@@ -276,13 +465,19 @@ function App() {
             if (drawDraft) {
                 const point = toCanvasPoint(e);
                 const finalDraft = updateDraftPoint(drawDraft, point.x, point.y);
-                const geometry = getDraftGeometry(finalDraft);
+                const shouldCreate = hasMeaningfulDraft(finalDraft);
                 setDrawDraft(null);
+                if (!shouldCreate) {
+                    return;
+                }
+                const geometry = getDraftGeometry(finalDraft);
                 if (finalDraft.tool === ToolType.Line || finalDraft.tool === ToolType.Pen) {
                     createShape(ToolType.Line, geometry.x, geometry.y, geometry.width, geometry.height);
+                    setTool(ToolType.Select);
                     return;
                 }
                 createShape(finalDraft.tool, geometry.x, geometry.y, geometry.width, geometry.height);
+                setTool(ToolType.Select);
                 return;
             }
             endPointerDrag();
@@ -328,28 +523,58 @@ function App() {
         }
         setChatStreaming(true);
         setChatError(null);
+        setProgressEvents([]);
         setChatInput('');
         setChatHistory((prev) => [...prev, { role: 'user', content: prompt }]);
         const selectionContext = contextBuilder.buildSelectionContext(selectedIds);
-        const messages = promptEngine.buildMessages(prompt, selectionContext, chatHistory);
-        let assistantText = '';
+        const historySnapshot = chatHistory;
+        const messages = promptEngine.buildMessages(prompt, selectionContext, historySnapshot);
         try {
-            for await (const chunk of aiClient.streamChat(activeModel, messages)) {
-                if (chunk.type === 'content') {
-                    assistantText += chunk.content;
-                    setChatHistory((prev) => {
-                        const hasAssistant = prev.length > 0 && prev[prev.length - 1].role === 'assistant';
-                        if (!hasAssistant) {
-                            return [...prev, { role: 'assistant', content: assistantText }];
-                        }
-                        return [...prev.slice(0, -1), { role: 'assistant', content: assistantText }];
-                    });
+            const result = await aiClient.createToolCallingTurn(activeModel, messages, aiTools, async (name, args) => {
+                if (name === 'read_canvas_context') {
+                    const scope = typeof args?.scope === 'string'
+                        ? args.scope
+                        : 'selection';
+                    const context = scope === 'global'
+                        ? contextBuilder.buildGlobalContext()
+                        : contextBuilder.buildSelectionContext(selectedIds);
+                    return JSON.stringify({ ok: true, context });
                 }
-            }
-            const dsl = dslCompiler.extractDSL(assistantText);
-            if (dsl) {
-                const commands = dslCompiler.compile(dsl);
-                applyCommands(commands);
+                if (name === 'apply_canvas_commands') {
+                    const payload = args?.dsl;
+                    if (!payload || typeof payload !== 'object') {
+                        return JSON.stringify({ ok: false, error: 'Missing dsl payload' });
+                    }
+                    const dsl = normalizeVigaDSL(payload);
+                    if (!dsl) {
+                        return JSON.stringify({ ok: false, error: 'Invalid DSL payload' });
+                    }
+                    const commands = dslCompiler.compile(dsl);
+                    if (!commands.length) {
+                        return JSON.stringify({ ok: true, applied: 0 });
+                    }
+                    applyCommands(commands);
+                    return JSON.stringify({ ok: true, applied: commands.length });
+                }
+                return JSON.stringify({ ok: false, error: `Unknown tool: ${name}` });
+            }, (event) => {
+                setProgressEvents((prev) => [...prev, event]);
+            });
+            const assistantText = result.finalMessage.trim() || 'Done.';
+            setChatHistory((prev) => {
+                const base = prev.length > 0 && prev[prev.length - 1].role === 'user'
+                    ? prev
+                    : [...prev, { role: 'user', content: prompt }];
+                return [...base, { role: 'assistant', content: assistantText }];
+            });
+            if (!result.toolCalls.length) {
+                const dsl = dslCompiler.extractDSL(assistantText);
+                if (dsl) {
+                    const commands = dslCompiler.compile(dsl);
+                    if (commands.length) {
+                        applyCommands(commands);
+                    }
+                }
             }
         }
         catch (error) {
@@ -364,6 +589,7 @@ function App() {
     const saveModelConfig = async () => {
         try {
             await modelManager.saveConfig(modelDraft, apiKeyDraft);
+            setApiKeyDraft('');
             setModelRevision((v) => v + 1);
             setTestStatus('Saved model profile.');
         }
@@ -375,44 +601,59 @@ function App() {
         const active = modelManager.getActive() ?? modelDraft;
         const result = await modelManager.testConnection(active.id);
         if (result.success) {
-            setTestStatus(`Connection OK (${result.latency}ms)`);
+            const sampleModels = (result.models ?? []).slice(0, 3);
+            const suffix = sampleModels.length > 0 ? ` · models: ${sampleModels.join(', ')}` : '';
+            setTestStatus(`Connection OK (${result.latency}ms)${suffix}`);
         }
         else {
             setTestStatus(`Connection failed: ${result.error ?? 'unknown error'}`);
         }
     };
     return (_jsxs("div", { className: "app-shell", children: [_jsx("header", { className: "menu-bar", children: "Viga" }), _jsx("div", { className: "workspace", children: _jsxs("div", { className: "canvas-zone", style: {
-                        ['--left-panel-width']: `${leftPanelWidth}px`,
+                        ['--ai-panel-width']: `${aiPanelWidth}px`,
                         ['--right-panel-width']: `${rightPanelWidth}px`,
                     }, children: [_jsx("canvas", { ref: canvasRef, className: "canvas", style: { cursor: activeTool === ToolType.Hand ? 'grab' : drawDraft ? 'crosshair' : 'default' }, ...mouseHandlers }), marqueeBox ? (_jsx("div", { className: "marquee-box", style: {
                                 left: marqueeBox.left,
                                 top: marqueeBox.top,
                                 width: marqueeBox.width,
                                 height: marqueeBox.height,
-                            } })) : null, rendererError ? _jsx("p", { className: "canvas-error", children: rendererError }) : null, _jsxs("div", { className: "viewport-chip", children: [Math.round(viewport.zoom * 100), "%"] }), _jsx("div", { className: "tool-dock", children: _jsx(ToolBar, { activeTool: activeTool, onToolChange: setTool, orientation: "horizontal" }) }), _jsxs("aside", { className: "floating-panel floating-left", style: { width: leftPanelWidth }, children: [_jsx(LayerPanel, { nodes: nodes, selectedIds: selectedIds, onSelectNode: (id, append) => {
-                                        if (append) {
-                                            const next = selectedIds.includes(id)
-                                                ? selectedIds.filter((existing) => existing !== id)
-                                                : [...selectedIds, id];
-                                            setSelectedIds(next);
-                                        }
-                                        else {
-                                            setSelectedIds([id]);
-                                        }
-                                    } }), _jsx(AiPanel, { modelDraft: modelDraft, modelConfigs: modelConfigs, chatHistory: chatHistory, chatInput: chatInput, chatStreaming: chatStreaming, chatError: chatError, testStatus: testStatus, apiKeyDraft: apiKeyDraft, onChatInputChange: setChatInput, onSelectModel: (modelId) => {
-                                        const next = modelConfigs.find((cfg) => cfg.id === modelId);
-                                        if (!next) {
-                                            return;
-                                        }
-                                        modelManager.setActive(next.id);
-                                        setModelDraft(next);
-                                    }, onPatchModelDraft: (patch) => setModelDraft((curr) => ({ ...curr, ...patch })), onApiKeyDraftChange: setApiKeyDraft, onRun: runAiCommand, onSaveModel: saveModelConfig, onTestModel: testModelConfig })] }), _jsx("div", { className: "panel-resizer panel-resizer-left", onMouseDown: (event) => {
+                            } })) : null, rendererError ? _jsx("p", { className: "canvas-error", children: rendererError }) : null, _jsxs("div", { className: "viewport-chip", children: [Math.round(viewport.zoom * 100), "%"] }), _jsx("div", { className: "tool-dock", children: _jsx(ToolBar, { activeTool: activeTool, onToolChange: setTool, orientation: "horizontal" }) }), _jsx("aside", { className: "floating-panel floating-ai-left", style: { width: aiPanelWidth }, children: _jsx(AiPanel, { chatHistory: chatHistory, chatInput: chatInput, chatStreaming: chatStreaming, progressEvents: progressEvents, chatError: chatError, onChatInputChange: setChatInput, onRun: runAiCommand }) }), _jsx("div", { className: "panel-resizer panel-resizer-ai", onMouseDown: (event) => {
                                 event.preventDefault();
-                                panelResizeRef.current = { side: 'left', startX: event.clientX, startWidth: leftPanelWidth };
-                            } }), _jsx("aside", { className: "floating-panel floating-right", style: { width: rightPanelWidth }, children: _jsx(PropertiesPanel, { selectedCount: selectedIds.length, selectedNode: selectedNode, onPatchSelection: updateSelectionStyles }) }), _jsx("div", { className: "panel-resizer panel-resizer-right", onMouseDown: (event) => {
+                                panelResizeRef.current = { side: 'ai', startX: event.clientX, startWidth: aiPanelWidth };
+                            } }), _jsxs("aside", { ref: rightStackRef, className: "floating-panel floating-right-stack", style: { width: rightPanelWidth }, children: [_jsx("div", { className: "right-stack-pane", style: { flexBasis: `${Math.round(rightStackSplit * 100)}%` }, children: _jsx(LayerPanel, { nodes: nodes, selectedIds: selectedIds, onSelectNode: (id, append) => {
+                                            if (append) {
+                                                const next = selectedIds.includes(id)
+                                                    ? selectedIds.filter((existing) => existing !== id)
+                                                    : [...selectedIds, id];
+                                                setSelectedIds(next);
+                                            }
+                                            else {
+                                                setSelectedIds([id]);
+                                            }
+                                        } }) }), _jsx("div", { className: "right-stack-splitter", onMouseDown: (event) => {
+                                        event.preventDefault();
+                                        const height = rightStackRef.current?.getBoundingClientRect().height ?? 1;
+                                        rightStackResizeRef.current = {
+                                            startY: event.clientY,
+                                            startSplit: rightStackSplit,
+                                            height,
+                                        };
+                                    } }), _jsx("div", { className: "right-stack-pane right-stack-pane-bottom", children: _jsx(PropertiesPanel, { selectedCount: selectedIds.length, selectedNode: selectedNode, onPatchSelection: updateSelectionStyles }) })] }), _jsx("div", { className: "panel-resizer panel-resizer-right", onMouseDown: (event) => {
                                 event.preventDefault();
                                 panelResizeRef.current = { side: 'right', startX: event.clientX, startWidth: rightPanelWidth };
-                            } })] }) })] }));
+                            } })] }) }), _jsx("button", { type: "button", className: "settings-fab", onClick: () => setSettingsOpen(true), children: "Settings" }), settingsOpen ? (_jsx("div", { className: "settings-backdrop", onClick: () => setSettingsOpen(false), role: "presentation", children: _jsxs("section", { className: "settings-panel", onClick: (event) => event.stopPropagation(), children: [_jsxs("div", { className: "settings-head", children: [_jsxs("div", { children: [_jsx("strong", { children: "AI Settings" }), _jsx("span", { children: "Configure provider, model, and API key." })] }), _jsx("button", { type: "button", onClick: () => setSettingsOpen(false), children: "Close" })] }), _jsxs("div", { className: "settings-grid", children: [_jsxs("label", { className: "settings-field", children: ["Profile", _jsxs("select", { value: modelDraft.id, onChange: (e) => {
+                                                const next = modelConfigs.find((cfg) => cfg.id === e.target.value);
+                                                if (!next) {
+                                                    return;
+                                                }
+                                                modelManager.setActive(next.id);
+                                                setModelDraft(next);
+                                            }, children: [_jsx("option", { value: modelDraft.id, children: modelDraft.name || modelDraft.id }), modelConfigs
+                                                    .filter((cfg) => cfg.id !== modelDraft.id)
+                                                    .map((cfg) => (_jsx("option", { value: cfg.id, children: cfg.name }, cfg.id)))] })] }), _jsxs("label", { className: "settings-field", children: ["Profile Name", _jsx("input", { value: modelDraft.name, onChange: (e) => setModelDraft((curr) => ({ ...curr, name: e.target.value })) })] }), _jsxs("label", { className: "settings-field", children: ["Provider", _jsx("select", { value: modelDraft.provider, onChange: () => setModelDraft((curr) => ({ ...curr, provider: 'openai-compatible' })), children: _jsx("option", { value: "openai-compatible", children: "OpenAI Compatible" }) })] }), _jsxs("label", { className: "settings-field", children: ["Protocol", _jsxs("select", { value: modelDraft.apiProtocol ?? 'chat-completions', onChange: (e) => setModelDraft((curr) => ({
+                                                ...curr,
+                                                apiProtocol: e.target.value === 'responses' ? 'responses' : 'chat-completions',
+                                            })), children: [_jsx("option", { value: "chat-completions", children: "Chat Completions" }), _jsx("option", { value: "responses", children: "Responses API" })] })] }), _jsxs("label", { className: "settings-field", children: ["Base URL", _jsx("input", { value: modelDraft.baseUrl, onChange: (e) => setModelDraft((curr) => ({ ...curr, baseUrl: e.target.value })) })] }), _jsxs("label", { className: "settings-field", children: ["Model", _jsx("input", { value: modelDraft.modelName, onChange: (e) => setModelDraft((curr) => ({ ...curr, modelName: e.target.value })) })] }), _jsxs("label", { className: "settings-field settings-field-full", children: ["API Key", _jsx("input", { type: "password", value: apiKeyDraft, onChange: (e) => setApiKeyDraft(e.target.value) })] }), _jsxs("div", { className: "settings-actions settings-field-full", children: [_jsx("button", { type: "button", onClick: saveModelConfig, children: "Save" }), _jsx("button", { type: "button", onClick: testModelConfig, children: "Test" })] }), testStatus ? _jsx("div", { className: "settings-status settings-field-full", children: testStatus }) : null] })] }) })) : null] }));
 }
 export default App;
 //# sourceMappingURL=App.js.map
